@@ -30,6 +30,11 @@ export const publicPool = mysql.createPool({
   database: requireEnv('DB_PUBLIC'),
 });
 
+export const leadsPool = mysql.createPool({
+  ...baseConfig,
+  database: requireEnv('DB_LEADS'),
+});
+
 export async function closeAllPools(): Promise<void> {
-  await Promise.all([scrapingPool.end(), publicPool.end()]);
+  await Promise.all([scrapingPool.end(), publicPool.end(), leadsPool.end()]);
 }

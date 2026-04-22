@@ -79,6 +79,48 @@ interface TicketmasterPayload {
 
 export class MappingError extends Error {}
 
+export interface NormalizedPromoter {
+  externalId: string;
+  name: string;
+  legalName: string | null;
+  parentCompany: string | null;
+}
+
+interface TicketmasterPromoter {
+  id?: string;
+  name?: string;
+}
+
+export function mapTicketmasterPromoter(raw: unknown): NormalizedPromoter | null {
+  const p = raw as TicketmasterPayload;
+  const primary: TicketmasterPromoter | undefined =
+    (p as unknown as { promoter?: TicketmasterPromoter }).promoter ??
+    (p as unknown as { promoters?: TicketmasterPromoter[] }).promoters?.[0];
+  if (!primary?.id || !primary.name) return null;
+  const name = primary.name.trim();
+  return {
+    externalId: primary.id,
+    name,
+    legalName: extractLegalName(name),
+    parentCompany: detectParentCompany(name),
+  };
+}
+
+// Detecta la sigla legal (S.L., S.A., S.A.U., etc) al final del nombre.
+function extractLegalName(name: string): string | null {
+  if (/\b(S\.?L\.?U?\.?|S\.?A\.?U?\.?|S\.?R\.?L\.?|S\.?L\.?L\.?|S\.?C\.?P\.?)\b/i.test(name)) {
+    return name;
+  }
+  return null;
+}
+
+// Heurística para agrupar SPVs bajo su matriz. Por ahora solo Live Nation,
+// que tiene decenas de SPVs tipo "Live Nation España Golden Age SL".
+function detectParentCompany(name: string): string | null {
+  if (/live\s*nation/i.test(name)) return 'Live Nation España';
+  return null;
+}
+
 export function mapTicketmaster(raw: unknown): NormalizedEvent {
   const p = raw as TicketmasterPayload;
   if (!p.id) throw new MappingError('Payload without id');
