@@ -81,6 +81,11 @@ export function EventCard({ event }: EventCardProps) {
             <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
             {formatDate(event.date)} · {event.time}
           </span>
+          {event.dateCount && event.dateCount > 1 && (
+            <span className="inline-flex items-center bg-primary/10 text-primary text-[10px] font-semibold px-2 py-0.5 rounded-full">
+              +{event.dateCount - 1} fecha{event.dateCount - 1 !== 1 ? "s" : ""}
+            </span>
+          )}
           <span className="flex items-center gap-1">
             <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
             {event.venue}, {event.city}

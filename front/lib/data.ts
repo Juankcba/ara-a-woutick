@@ -33,6 +33,9 @@ export interface Event {
   image: string;
   prices: PlatformPrice[];
   featured?: boolean;
+  // Cantidad de fechas disponibles para este "evento grupo" (misma obra/tour
+  // en la misma ciudad con múltiples funciones). 1 = fecha única.
+  dateCount?: number;
 }
 
 export const PLATFORM_META: Record<
