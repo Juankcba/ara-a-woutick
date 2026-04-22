@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Claude Code per-machine config (tool permissions, etc.)
+.claude/settings.local.json

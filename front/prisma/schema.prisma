@@ -1,0 +1,136 @@
+// ============================================================================
+// Prisma schema para ticket_public. Tablas creadas a mano via SQL en
+// db/ticket_public/*.sql — NO usar `prisma migrate` sobre esta DB; siempre
+// añadir migrations en db/ticket_public/XXX_*.sql y después ajustar acá.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_PUBLIC")
+}
+
+model Platform {
+  id           Int      @id @default(autoincrement()) @db.UnsignedSmallInt
+  slug         String   @unique @db.VarChar(50)
+  name         String   @db.VarChar(100)
+  homepageUrl  String?  @map("homepage_url") @db.VarChar(500)
+  logoUrl      String?  @map("logo_url") @db.VarChar(500)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  listings EventListing[]
+
+  @@map("platforms")
+}
+
+model Venue {
+  id        Int      @id @default(autoincrement()) @db.UnsignedInt
+  name      String   @db.VarChar(255)
+  city      String   @db.VarChar(100)
+  region    String?  @db.VarChar(100)
+  country   String   @default("ES") @db.Char(2)
+  address   String?  @db.VarChar(500)
+  lat       Decimal? @db.Decimal(10, 7)
+  lng       Decimal? @db.Decimal(10, 7)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  events Event[]
+
+  @@unique([name, city], map: "uk_venues_name_city")
+  @@index([city], map: "idx_venues_city")
+  @@index([name], map: "idx_venues_name")
+  @@map("venues")
+}
+
+enum EventCategory {
+  conciertos
+  teatro
+  deportes
+  festivales
+  familiar
+  comedia
+  otros
+}
+
+enum EventStatus {
+  draft
+  published
+  cancelled
+  past
+}
+
+model Event {
+  id             Int           @id @default(autoincrement()) @db.UnsignedInt
+  slug           String        @unique @db.VarChar(255)
+  title          String        @db.VarChar(500)
+  category       EventCategory @default(otros)
+  description    String?       @db.Text
+  imageUrl       String?       @map("image_url") @db.VarChar(1000)
+  eventDatetime  DateTime      @map("event_datetime") @db.DateTime(0)
+  doorsOpen      DateTime?     @map("doors_open") @db.DateTime(0)
+  venueId        Int?          @map("venue_id") @db.UnsignedInt
+  canonicalKey   String        @unique(map: "uk_events_canonical") @map("canonical_key") @db.VarChar(128)
+  status         EventStatus   @default(draft)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  venue    Venue?         @relation(fields: [venueId], references: [id], onDelete: SetNull, onUpdate: Cascade, map: "fk_events_venue")
+  listings EventListing[]
+
+  @@index([eventDatetime], map: "idx_events_datetime")
+  @@index([category], map: "idx_events_category")
+  @@index([status], map: "idx_events_status")
+  @@map("events")
+}
+
+enum Availability {
+  available
+  low
+  sold_out
+  unknown
+}
+
+model EventListing {
+  id              BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  eventId         Int           @map("event_id") @db.UnsignedInt
+  platformId      Int           @map("platform_id") @db.UnsignedSmallInt
+  externalId      String?       @map("external_id") @db.VarChar(255)
+  url             String        @db.VarChar(1000)
+  priceMin        Decimal?      @map("price_min") @db.Decimal(10, 2)
+  priceMax        Decimal?      @map("price_max") @db.Decimal(10, 2)
+  currency        String        @default("EUR") @db.Char(3)
+  availability    Availability  @default(unknown)
+  lastCheckedAt   DateTime      @map("last_checked_at") @db.DateTime(0)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  event    Event                 @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "fk_listings_event")
+  platform Platform              @relation(fields: [platformId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "fk_listings_platform")
+  history  ListingPriceHistory[]
+
+  @@unique([eventId, platformId], map: "uk_listings_event_platform")
+  @@index([platformId], map: "idx_listings_platform")
+  @@index([priceMin], map: "idx_listings_price_min")
+  @@index([lastCheckedAt], map: "idx_listings_checked")
+  @@map("event_listings")
+}
+
+model ListingPriceHistory {
+  id           BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  listingId    BigInt       @map("listing_id") @db.UnsignedBigInt
+  priceMin     Decimal?     @map("price_min") @db.Decimal(10, 2)
+  priceMax     Decimal?     @map("price_max") @db.Decimal(10, 2)
+  availability Availability @default(unknown)
+  checkedAt    DateTime     @map("checked_at") @db.DateTime(0)
+
+  listing EventListing @relation(fields: [listingId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "fk_price_history_listing")
+
+  @@index([listingId, checkedAt], map: "idx_price_history_listing")
+  @@map("listing_price_history")
+}
