@@ -39,18 +39,14 @@ export function SiteHeader() {
         </nav>
 
         {/* Right */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="hidden sm:block">
-            {platformCount} plataformas
-          </span>
-          <a
-            href="https://www.taquilla.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs font-medium text-primary hover:text-brand-dark transition-colors"
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <Link
+            href="/promoters"
+            className="text-xs font-medium text-foreground hover:text-primary transition-colors"
           >
-            Ir a Taquilla.com
-          </a>
+            Organizadores
+          </Link>
+          <span className="hidden sm:block">{platformCount} plataformas</span>
         </div>
       </div>
     </header>
