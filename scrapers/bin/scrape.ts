@@ -2,7 +2,7 @@ import '../src/env.ts';
 import { closeAllPools } from '../src/db.ts';
 import { endRun, logError, resolveSourceId, startRun } from '../src/run.ts';
 
-const SCRAPERS = ['ticketmaster'] as const;
+const SCRAPERS = ['ticketmaster', 'taquilla'] as const;
 type ScraperSlug = (typeof SCRAPERS)[number];
 
 function isKnown(slug: string): slug is ScraperSlug {

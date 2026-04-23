@@ -7,6 +7,7 @@ import {
   type NormalizedPromoter,
   type NormalizedVenue,
 } from './mappers/ticketmaster.ts';
+import { mapTaquilla, mapTaquillaPromoter } from './mappers/taquilla.ts';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 
 export interface PromoteStats {
@@ -22,6 +23,10 @@ const MAPPERS = {
   ticketmaster: {
     event: mapTicketmaster,
     promoter: mapTicketmasterPromoter,
+  },
+  taquilla: {
+    event: mapTaquilla,
+    promoter: mapTaquillaPromoter,
   },
 } as const;
 
