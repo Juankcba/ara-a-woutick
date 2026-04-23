@@ -46,6 +46,12 @@ export function SiteHeader() {
           >
             Organizadores
           </Link>
+          <Link
+            href="/admin"
+            className="text-xs font-medium text-foreground hover:text-primary transition-colors"
+          >
+            Admin
+          </Link>
           <span className="hidden sm:block">{platformCount} plataformas</span>
         </div>
       </div>
