@@ -63,10 +63,15 @@ export interface CompanyRow {
   website: string | null;
   email: string | null;
   phone: string | null;
+  linkedinUrl: string | null;
+  industry: string | null;
+  employeesSize: string | null;
+  employeesExact: number | null;
   status: CompanyStatus;
   totalEvents: number;
   sources: string[];
   lastSeenAt: Date | null;
+  enrichmentSource: string | null;
 }
 
 interface RawRow {
@@ -79,10 +84,15 @@ interface RawRow {
   website: string | null;
   email: string | null;
   phone: string | null;
+  linkedin_url: string | null;
+  industry: string | null;
+  employees_size: string | null;
+  employees_exact: number | null;
   status: CompanyStatus;
   total_events: string | number | null;
   sources_csv: string | null;
   last_seen_at: Date | null;
+  enrichment_source: string | null;
 }
 
 export interface GetCompaniesOptions {
@@ -99,7 +109,9 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
     `
     SELECT
       c.id, c.name, c.legal_name, c.category, c.parent_company,
-      c.city, c.website, c.email, c.phone, c.status,
+      c.city, c.website, c.email, c.phone, c.linkedin_url,
+      c.industry, c.employees_size, c.employees_exact,
+      c.status, c.enrichment_source,
       COALESCE(SUM(s.events_count), 0)           AS total_events,
       GROUP_CONCAT(DISTINCT s.source_platform)    AS sources_csv,
       MAX(s.last_seen_at)                         AS last_seen_at
@@ -123,10 +135,15 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
     website: r.website,
     email: r.email,
     phone: r.phone,
+    linkedinUrl: r.linkedin_url,
+    industry: r.industry,
+    employeesSize: r.employees_size,
+    employeesExact: r.employees_exact,
     status: r.status,
     totalEvents: Number(r.total_events ?? 0),
     sources: r.sources_csv ? r.sources_csv.split(',') : [],
     lastSeenAt: r.last_seen_at,
+    enrichmentSource: r.enrichment_source,
   }));
 }
 

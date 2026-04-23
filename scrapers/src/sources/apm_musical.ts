@@ -9,21 +9,22 @@ import {
 } from '../run.ts';
 import type { ResultSetHeader } from 'mysql2';
 
-// APM Musical = Asociación de Promotores Musicales de España. Directorio
-// público de promotores, salas y agencias asociadas. NO scrapea eventos:
-// escribe directamente a leads_crm.companies + company_sources.
+// APM Musical = Asociación de Promotores Musicales de España. Explotamos
+// TRES custom post types que APM expone vía WP REST, cada uno mapeado a
+// una categoría de lead distinta:
 //
-// Fuentes:
-//   1. WP REST API /wp-json/wp/v2/asociados → 101 registros con name + id
-//   2. HTML /asociados-apm/ → los primeros ~20 vienen pre-renderizados con
-//      website y categoría inferida por la sección
-// El resto se guarda solo con el nombre (enriquecimiento manual/apollo después).
+//   /wp-json/wp/v2/asociados       → ~101 asociados institucionales
+//   /wp-json/wp/v2/festivales      → ~80  festivales
+//   /wp-json/wp/v2/tribe_organizer → ~107 organizadores (de events) distintos
+//
+// Además, del HTML de /asociados-apm/ extraemos website + categoría para los
+// primeros ~20 asociados visibles (el resto está tras infinite-scroll de
+// Elementor que no emulamos).
 
 const SLUG = 'apm_musical';
 const ORIGIN = 'https://apmusicales.com';
 const DIRECTORY_URL = `${ORIGIN}/asociados-apm/`;
-const API_BASE = `${ORIGIN}/wp-json/wp/v2/asociados`;
-const REQ_DELAY_MS = 800;
+const REQ_DELAY_MS = 600;
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -33,47 +34,92 @@ type ApmCategory =
   | 'ticketing'
   | 'venue'
   | 'agency_production'
+  | 'festival'
   | 'venue_complex'
   | 'other';
 
+interface PostTypeConfig {
+  endpoint: string;
+  defaultCategory: ApmCategory;
+  externalIdPrefix: string;
+  profilePath: string; // path fragment para doc (no se usa en upsert)
+}
+
+const POST_TYPES: PostTypeConfig[] = [
+  {
+    endpoint: 'asociados',
+    defaultCategory: 'promoter',
+    externalIdPrefix: 'asociado',
+    profilePath: '/asociados/',
+  },
+  {
+    endpoint: 'festivales',
+    defaultCategory: 'festival',
+    externalIdPrefix: 'festival',
+    profilePath: '/festivales/',
+  },
+  {
+    endpoint: 'tribe_organizer',
+    defaultCategory: 'promoter',
+    externalIdPrefix: 'tribe-organizer',
+    profilePath: '/organizador/',
+  },
+];
+
 interface ApmRecord {
-  externalId: string;     // WP post id
+  externalId: string; // prefix-<wpid>
+  postId: number;
   name: string;
   slug: string;
-  profileUrl: string;     // /asociados/<slug>/ aunque redirija
+  profileUrl: string;
   website: string | null;
   category: ApmCategory;
   logoUrl: string | null;
 }
 
-interface WpAsociado {
+interface WpPost {
   id: number;
   slug: string;
   link: string;
   title: { rendered: string };
-  featured_media?: number;
 }
 
 export async function run(runId: number): Promise<RunStats> {
   const sourceId = await resolveSourceId(SLUG);
   const stats = emptyStats();
 
-  // 1. Lista completa desde REST API.
-  const apiRecords = await fetchAllFromApi(runId, stats);
-  console.log(`[apm_musical] REST API devolvió ${apiRecords.length} asociados`);
-
-  // 2. Parseo del HTML público para obtener website + categoría de los visibles.
-  const htmlMap = await fetchDirectoryEnrichments(runId, stats);
-  console.log(`[apm_musical] HTML parseó ${htmlMap.size} con website`);
-
-  // 3. Merge + upsert.
-  for (const rec of apiRecords) {
-    const enrich = htmlMap.get(rec.externalId);
-    if (enrich) {
-      rec.website = enrich.website ?? rec.website;
-      rec.category = enrich.category ?? rec.category;
-      rec.logoUrl = enrich.logoUrl ?? rec.logoUrl;
+  // 1. Obtener datos de los 3 post types vía REST.
+  const allRecords: ApmRecord[] = [];
+  for (const pt of POST_TYPES) {
+    try {
+      const recs = await fetchAllFromApi(runId, stats, pt);
+      console.log(`[apm_musical] ${pt.endpoint}: ${recs.length} items`);
+      allRecords.push(...recs);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await logError(runId, `fetch ${pt.endpoint}: ${msg}`, { errorCode: 'api' });
+      stats.items_error++;
     }
+    await sleep(REQ_DELAY_MS);
+  }
+  console.log(`[apm_musical] total ${allRecords.length} records from ${POST_TYPES.length} post types`);
+
+  // 2. Enriquecer los asociados visibles con website + categoría inferida.
+  const htmlMap = await fetchDirectoryEnrichments(runId, stats);
+  console.log(`[apm_musical] HTML enrichment for ${htmlMap.size} asociados with website`);
+  for (const rec of allRecords) {
+    if (rec.externalId.startsWith('asociado-')) {
+      const e = htmlMap.get(String(rec.postId));
+      if (e) {
+        rec.website = e.website ?? rec.website;
+        rec.category = e.category ?? rec.category;
+        rec.logoUrl = e.logoUrl ?? rec.logoUrl;
+      }
+    }
+  }
+
+  // 3. Upsert a leads_crm.
+  for (const rec of allRecords) {
     try {
       const result = await upsertCompany(rec);
       stats.items_seen++;
@@ -89,39 +135,43 @@ export async function run(runId: number): Promise<RunStats> {
   return stats;
 }
 
-async function fetchAllFromApi(runId: number, stats: RunStats): Promise<ApmRecord[]> {
+async function fetchAllFromApi(
+  runId: number,
+  stats: RunStats,
+  pt: PostTypeConfig,
+): Promise<ApmRecord[]> {
   const out: ApmRecord[] = [];
   let page = 1;
   const perPage = 100;
 
   while (true) {
-    const url = `${API_BASE}?per_page=${perPage}&page=${page}&_fields=id,slug,link,title`;
+    const url = `${ORIGIN}/wp-json/wp/v2/${pt.endpoint}?per_page=${perPage}&page=${page}&_fields=id,slug,link,title`;
     let res: Response;
     try {
       res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
     } catch (e) {
-      await logError(runId, `API fetch failed p${page}: ${String(e)}`, { url, errorCode: 'api' });
+      await logError(runId, `API fetch failed ${pt.endpoint} p${page}: ${String(e)}`, { url, errorCode: 'api' });
       stats.items_error++;
       break;
     }
     if (!res.ok) {
-      // WP devuelve 400 cuando pedís una página más allá del total.
-      if (res.status === 400) break;
-      await logError(runId, `API HTTP ${res.status} p${page}`, { url, errorCode: `http_${res.status}` });
+      if (res.status === 400) break; // página fuera de rango
+      await logError(runId, `API HTTP ${res.status} ${pt.endpoint} p${page}`, { url, errorCode: `http_${res.status}` });
       stats.items_error++;
       break;
     }
-    const items = (await res.json()) as WpAsociado[];
+    const items = (await res.json()) as WpPost[];
     if (!Array.isArray(items) || items.length === 0) break;
 
     for (const it of items) {
       out.push({
-        externalId: String(it.id),
+        externalId: `${pt.externalIdPrefix}-${it.id}`,
+        postId: it.id,
         name: decodeHtml(it.title.rendered).trim(),
         slug: it.slug,
         profileUrl: it.link,
         website: null,
-        category: 'promoter',
+        category: pt.defaultCategory,
         logoUrl: null,
       });
     }
@@ -132,8 +182,6 @@ async function fetchAllFromApi(runId: number, stats: RunStats): Promise<ApmRecor
   return out;
 }
 
-// Parsea la página /asociados-apm/ para extraer, de los asociados visibles,
-// website + categoría + logo.
 async function fetchDirectoryEnrichments(
   runId: number,
   stats: RunStats,
@@ -154,9 +202,6 @@ async function fetchDirectoryEnrichments(
   }
 
   const $ = cheerio.load(html);
-
-  // Cada asociado renderizado vive en <div class="... post-<ID> asociados ...">.
-  // Usamos clase parcial "e-loop-item" como ancla segura.
   $('[class*="asociados"][class*="post-"]').each((_, el) => {
     const $el = $(el);
     const classes = $el.attr('class') ?? '';
@@ -164,7 +209,6 @@ async function fetchDirectoryEnrichments(
     if (!idMatch) return;
     const postId = idMatch[1];
 
-    // Primer link externo (el de la web de la empresa, no apmusicales ni social).
     const website = $el
       .find('a[href^="http"]')
       .map((__, a) => $(a).attr('href') ?? '')
@@ -173,7 +217,6 @@ async function fetchDirectoryEnrichments(
 
     const logoUrl = $el.find('img').first().attr('src') ?? null;
 
-    // Categoría por la sección en la que está (H2 ancestro).
     const sectionHeading = $el
       .closest('section')
       .prevAll('section')
@@ -234,6 +277,12 @@ function companySlug(name: string): string {
 async function upsertCompany(rec: ApmRecord): Promise<'new' | 'updated'> {
   const slug = companySlug(rec.name);
 
+  // Lógica de categoría en el ON DUPLICATE:
+  //  - si la fila actual es 'other' → aceptar la nueva
+  //  - si la nueva es una upgrade específica (ticketing/venue_complex/festival)
+  //    → aceptar la nueva
+  //  - en caso de conflicto promoter↔venue, mantener la existente (ambas son
+  //    válidas, no queremos flip-flop según último upsert)
   const [res] = await leadsPool.query<ResultSetHeader>(
     `INSERT INTO companies (slug, name, category, website, status)
      VALUES (?, ?, ?, ?, 'new')
@@ -241,10 +290,8 @@ async function upsertCompany(rec: ApmRecord): Promise<'new' | 'updated'> {
        id = LAST_INSERT_ID(id),
        name = VALUES(name),
        category = CASE
-         -- Si ya tenía una categoría más específica (ej: venimos de TM con 'promoter'),
-         -- solo actualizamos si APM nos da algo más concreto.
          WHEN category = 'other' THEN VALUES(category)
-         WHEN VALUES(category) IN ('ticketing','venue','venue_complex') THEN VALUES(category)
+         WHEN VALUES(category) IN ('ticketing','venue_complex','festival') THEN VALUES(category)
          ELSE category
        END,
        website = COALESCE(VALUES(website), website)`,
@@ -267,6 +314,7 @@ async function upsertCompany(rec: ApmRecord): Promise<'new' | 'updated'> {
       rec.externalId,
       rec.profileUrl,
       JSON.stringify({
+        postId: rec.postId,
         slug: rec.slug,
         logoUrl: rec.logoUrl,
         category: rec.category,

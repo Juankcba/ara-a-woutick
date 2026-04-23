@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Building2, Globe, Mail, Phone } from "lucide-react";
+import { ArrowUpRight, Building2, Globe, Linkedin, Mail, Phone, Sparkles, Users } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { getCompanies, getCompanyStats, type CompanyCategory, type CompanyStatus } from "@/lib/leads";
 
@@ -87,7 +87,8 @@ export default async function PromotersPage() {
                 <tr className="text-left">
                   <Th>Empresa</Th>
                   <Th>Categoría</Th>
-                  <Th>Grupo</Th>
+                  <Th>Industria</Th>
+                  <Th className="text-right">Empleados</Th>
                   <Th className="text-right">Eventos</Th>
                   <Th>Fuentes</Th>
                   <Th>Ciudad</Th>
@@ -99,9 +100,16 @@ export default async function PromotersPage() {
                 {companies.map((c) => (
                   <tr key={c.id} className="border-t border-border hover:bg-secondary/40 transition-colors">
                     <Td>
-                      <div className="font-medium text-foreground">{c.name}</div>
-                      {c.legalName && c.legalName !== c.name && (
-                        <div className="text-xs text-muted-foreground">{c.legalName}</div>
+                      <div className="font-medium text-foreground flex items-center gap-1.5">
+                        {c.name}
+                        {c.enrichmentSource === "apollo" && (
+                          <span title="Enriquecido con Apollo">
+                            <Sparkles className="w-3 h-3 text-amber-500" />
+                          </span>
+                        )}
+                      </div>
+                      {c.parentCompany && (
+                        <div className="text-xs text-muted-foreground">Grupo: {c.parentCompany}</div>
                       )}
                     </Td>
                     <Td>
@@ -109,8 +117,18 @@ export default async function PromotersPage() {
                         {CATEGORY_LABEL[c.category]}
                       </span>
                     </Td>
-                    <Td className="text-xs text-muted-foreground">
-                      {c.parentCompany ?? "—"}
+                    <Td className="text-xs text-muted-foreground capitalize">
+                      {c.industry ?? "—"}
+                    </Td>
+                    <Td className="text-right text-xs tabular-nums">
+                      {c.employeesExact != null ? (
+                        <span className="inline-flex items-center gap-1 text-foreground">
+                          <Users className="w-3 h-3 text-muted-foreground" />
+                          {c.employeesExact}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </Td>
                     <Td className="text-right tabular-nums font-semibold">{c.totalEvents}</Td>
                     <Td>
@@ -141,6 +159,17 @@ export default async function PromotersPage() {
                             <Globe className="w-3.5 h-3.5" />
                           </a>
                         )}
+                        {c.linkedinUrl && (
+                          <a
+                            href={c.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="LinkedIn"
+                            className="hover:text-primary"
+                          >
+                            <Linkedin className="w-3.5 h-3.5" />
+                          </a>
+                        )}
                         {c.email && (
                           <a
                             href={`mailto:${c.email}`}
@@ -159,7 +188,7 @@ export default async function PromotersPage() {
                             <Phone className="w-3.5 h-3.5" />
                           </a>
                         )}
-                        {!c.website && !c.email && !c.phone && (
+                        {!c.website && !c.linkedinUrl && !c.email && !c.phone && (
                           <span className="text-xs">—</span>
                         )}
                       </div>
