@@ -18,6 +18,12 @@ MAILTO=""
 0 4 * * 1      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape apm_musical >> /home/<CPANEL_USER>/logs/apm-scrape.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# Venues → leads_crm. Sincroniza todos los venues que los scrapers crearon
+# en ticket_public.venues a leads_crm.companies con category='venue'.
+# Diario 05:00 (después de Taquilla que es quien más venues genera).
+0 5 * * *      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/promote_venues_to_leads.ts >> /home/<CPANEL_USER>/logs/venues-promote.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
 # ECI entradas — NO corre en cPanel cron. Requiere Playwright + Chromium.
 # El VPS cPanel no tiene docker instalado, así que lo movimos a
 # GitHub Actions (.github/workflows/scrape-eci.yml, cada 12h).

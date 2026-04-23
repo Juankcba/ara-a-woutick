@@ -39,12 +39,13 @@ const PLATFORM_COLOR: Record<string, string> = {
   fever: "bg-[#FF2D55] text-white",
   elcorteingles: "bg-[#007940] text-white",
   apm_musical: "bg-slate-700 text-white",
+  venues_promoted: "bg-indigo-600 text-white",
   manual: "bg-slate-300 text-slate-800",
 };
 
 export default async function PromotersPage() {
   const [companies, stats] = await Promise.all([
-    getCompanies({ limit: 500 }),
+    getCompanies({ limit: 2000 }),
     getCompanyStats(),
   ]);
 
