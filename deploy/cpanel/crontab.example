@@ -1,0 +1,22 @@
+# Crontab para el usuario cPanel. Pegar en cPanel → Cron Jobs.
+# Antes: ajustar <CPANEL_USER> o usar $USER si la shell lo expande.
+# Todos los tiempos son del server (configurado a Europe/Madrid en /etc/localtime).
+
+# Silenciar los emails por default — usamos logs en disco.
+MAILTO=""
+
+# ──────────────────────────────────────────────────────────────────────
+# Ticketmaster — cada 12h (00:00 y 12:00). API data, ~6 min por corrida.
+0 0,12 * * *   /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape ticketmaster >> /home/<CPANEL_USER>/logs/tm-scrape.log 2>&1 && /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh promote ticketmaster 5000 >> /home/<CPANEL_USER>/logs/tm-promote.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
+# Taquilla — diario 03:00. HTML scraping, ~35 min por corrida.
+0 3 * * *      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape taquilla >> /home/<CPANEL_USER>/logs/taquilla-scrape.log 2>&1 && /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh promote taquilla 5000 >> /home/<CPANEL_USER>/logs/taquilla-promote.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
+# APM Musical — semanal lunes 04:00. Directorio estable, ~8s por corrida.
+0 4 * * 1      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape apm_musical >> /home/<CPANEL_USER>/logs/apm-scrape.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
+# Rotación de logs — semanal domingo 23:00. Mantiene los últimos 7 días.
+0 23 * * 0     find /home/<CPANEL_USER>/logs -name "*.log" -type f -mtime +7 -delete
