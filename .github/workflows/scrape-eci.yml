@@ -19,6 +19,9 @@ jobs:
   scrape:
     name: Scrape + promote ECI
     runs-on: ubuntu-latest
+    # Los secrets viven en el environment "Production" — declararlo aquí
+    # los hace accesibles vía ${{ secrets.X }}.
+    environment: Production
     timeout-minutes: 20
     defaults:
       run:
