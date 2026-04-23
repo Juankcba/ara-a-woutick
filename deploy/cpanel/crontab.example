@@ -29,6 +29,11 @@ MAILTO=""
 10 5 * * *     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/promote_festivals_to_leads.ts >> /home/<CPANEL_USER>/logs/festivals-promote.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# Discover websites — domain-guessing sobre empresas sin website.
+# Martes 05:00 antes del contact-scrape (que consume lo que esto produce).
+0 5 * * 2      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/discover_websites.ts --limit 100 >> /home/<CPANEL_USER>/logs/discover.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
 # Scrape contact pages — extrae emails+phones de /contacto /prensa /equipo
 # de las empresas con website y sin contacts. Martes 05:30.
 30 5 * * 2     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_contact_pages.ts --limit 100 >> /home/<CPANEL_USER>/logs/contact-scrape.log 2>&1
