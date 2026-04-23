@@ -24,6 +24,11 @@ MAILTO=""
 0 5 * * *      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/promote_venues_to_leads.ts >> /home/<CPANEL_USER>/logs/venues-promote.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# Festivales → leads_crm. Extrae los nombres de festival de los events
+# con category='festivales' y los agrupa como companies. Diario 05:10.
+10 5 * * *     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/promote_festivals_to_leads.ts >> /home/<CPANEL_USER>/logs/festivals-promote.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
 # ECI entradas — NO corre en cPanel cron. Requiere Playwright + Chromium.
 # El VPS cPanel no tiene docker instalado, así que lo movimos a
 # GitHub Actions (.github/workflows/scrape-eci.yml, cada 12h).
