@@ -132,6 +132,61 @@ El cron empieza a usar la nueva versión en su próxima corrida. Sin restart.
 **Taquilla corre 35 min — ¿lo mata el server?**
 - Comprobar si hay `MaxExecTime` en los límites de cPanel. Cron jobs rara vez tienen límite (distinto de PHP). Si hay problema, partir el scrape por ciudad/categoría en múltiples runs pequeños.
 
+## ECI vía Docker (scrapers con Playwright)
+
+ECI está detrás de Akamai Bot Manager y requiere un browser headless. En lugar de pedir sudo para instalar Chromium + sus libs del sistema, corremos ese scraper dentro de un container basado en `mcr.microsoft.com/playwright:v1.59.1-jammy` que ya trae todo.
+
+### 1. Build de la imagen (una sola vez)
+
+```bash
+cd ~/woutick-scrapers
+docker build -f deploy/cpanel/Dockerfile -t woutick-scrapers .
+```
+
+Esto tarda ~2-3 min la primera vez (descarga imagen base ~1.5GB + instala deps). Quedan cacheados en docker, las builds posteriores tras `git pull` son <30s porque solo se rebuildean las capas que cambiaron.
+
+### 2. Smoke test manual
+
+```bash
+~/woutick-scrapers/deploy/cpanel/docker-run.sh scrape elcorteingles
+```
+
+Esperado: ~1-2 min, `items_seen > 100`, 0 errors. Verifica en la DB con:
+
+```bash
+set -a && source ~/woutick-scrapers/.env && set +a
+mysql -u "$DB_USER" -p"$DB_PASS" dbwoutick_ticket_scraping -e \
+  "SELECT COUNT(*) FROM raw_events r JOIN sources s ON s.id=r.source_id WHERE s.slug='elcorteingles';"
+```
+
+### 3. Activar en cron
+
+La línea de ECI en `crontab.example` ya está destapada (usa `docker-run.sh`). Si ya tenés el crontab instalado de las otras fuentes, agregá solo la línea de ECI:
+
+```bash
+crontab -l > /tmp/current
+cat >> /tmp/current <<'EOF'
+0 6,18 * * *   /home/dbwoutick/woutick-scrapers/deploy/cpanel/docker-run.sh scrape elcorteingles >> /home/dbwoutick/logs/eci-scrape.log 2>&1 && /home/dbwoutick/woutick-scrapers/deploy/cpanel/docker-run.sh promote elcorteingles 5000 >> /home/dbwoutick/logs/eci-promote.log 2>&1
+EOF
+crontab /tmp/current && crontab -l
+```
+
+### 4. Actualizar tras cambios de código
+
+```bash
+cd ~/woutick-scrapers
+git pull
+docker build -f deploy/cpanel/Dockerfile -t woutick-scrapers .
+# la próxima corrida usa la imagen nueva
+```
+
+### Troubleshooting Docker
+
+- **"permission denied while trying to connect to docker daemon"**: el user cPanel no está en el grupo `docker`. Pedir al hosting: `usermod -aG docker dbwoutick` o similar.
+- **"Host '127.0.0.1' is not allowed to connect to this MySQL server"**: con `--network host` funciona como si fuera el mismo host. Si seguís viendo el error, probar setear `DB_HOST=host.docker.internal` en el `.env` (agregar también `--add-host=host.docker.internal:host-gateway` al `docker run`).
+- **Imagen ocupa mucho espacio**: `docker image prune -a` limpia imágenes sin referencia. Hacerlo cada varios meses.
+- **"pnpm: command not found" dentro del container**: el Dockerfile activa corepack — si falla, el build tenía un error. Re-correr `docker build`.
+
 ## Alternativa: Express API para trigger manual (opcional)
 
 Si después querés disparar scrapers ad-hoc desde n8n u otra parte, añadir una mini API Express:
