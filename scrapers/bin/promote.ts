@@ -2,7 +2,7 @@ import '../src/env.ts';
 import { closeAllPools } from '../src/db.ts';
 import { promote } from '../src/promote.ts';
 
-const SUPPORTED = ['ticketmaster', 'taquilla', 'fever'] as const;
+const SUPPORTED = ['ticketmaster', 'taquilla', 'fever', 'elcorteingles'] as const;
 type Slug = (typeof SUPPORTED)[number];
 const isSupported = (s: string): s is Slug => (SUPPORTED as readonly string[]).includes(s);
 

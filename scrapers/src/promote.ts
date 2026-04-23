@@ -9,6 +9,7 @@ import {
 } from './mappers/ticketmaster.ts';
 import { mapTaquilla, mapTaquillaPromoter } from './mappers/taquilla.ts';
 import { mapFever, mapFeverPromoter } from './mappers/fever.ts';
+import { mapEci, mapEciPromoter } from './mappers/elcorteingles.ts';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 
 export interface PromoteStats {
@@ -32,6 +33,10 @@ const MAPPERS = {
   fever: {
     event: mapFever,
     promoter: mapFeverPromoter,
+  },
+  elcorteingles: {
+    event: mapEci,
+    promoter: mapEciPromoter,
   },
 } as const;
 

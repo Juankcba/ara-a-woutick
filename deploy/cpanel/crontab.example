@@ -18,5 +18,12 @@ MAILTO=""
 0 4 * * 1      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape apm_musical >> /home/<CPANEL_USER>/logs/apm-scrape.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# ECI entradas — DESACTIVADO. Requiere Playwright + Chromium (~400MB) + libs
+# del sistema (libnss3, libasound2, libdrm, libgbm...). `playwright install-deps`
+# pide sudo que el user cPanel no tiene. Descomentar cuando se resuelva
+# (ver memory/project_eci_scraper.md). Mientras tanto correr manual desde Mac.
+#0 6,18 * * *  /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape elcorteingles >> /home/<CPANEL_USER>/logs/eci-scrape.log 2>&1 && /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh promote elcorteingles 5000 >> /home/<CPANEL_USER>/logs/eci-promote.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
 # Rotación de logs — semanal domingo 23:00. Mantiene los últimos 7 días.
 0 23 * * 0     find /home/<CPANEL_USER>/logs -name "*.log" -type f -mtime +7 -delete
