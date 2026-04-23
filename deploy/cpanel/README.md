@@ -132,9 +132,49 @@ El cron empieza a usar la nueva versión en su próxima corrida. Sin restart.
 **Taquilla corre 35 min — ¿lo mata el server?**
 - Comprobar si hay `MaxExecTime` en los límites de cPanel. Cron jobs rara vez tienen límite (distinto de PHP). Si hay problema, partir el scrape por ciudad/categoría en múltiples runs pequeños.
 
-## ECI vía Docker (scrapers con Playwright)
+## ECI vía GitHub Actions (path principal)
 
-ECI está detrás de Akamai Bot Manager y requiere un browser headless. En lugar de pedir sudo para instalar Chromium + sus libs del sistema, corremos ese scraper dentro de un container basado en `mcr.microsoft.com/playwright:v1.59.1-jammy` que ya trae todo.
+ECI requiere Playwright + Chromium. El VPS cPanel **no tiene docker** disponible al user, así que lo movimos a GitHub Actions — runner externo gratis (2000 min/mes) con Chromium preinstalado.
+
+Workflow: [`.github/workflows/scrape-eci.yml`](../../.github/workflows/scrape-eci.yml). Schedule: cada 12h (03:00 y 15:00 UTC). También se puede disparar manualmente desde la UI de GitHub → Actions → Scrape ECI → Run workflow.
+
+### 1. MySQL: crear user con grants desde `%`
+
+GitHub Actions runners usan IPs rotativas de AWS/Azure. No hay rango fijo. Opciones:
+
+- **(Simpler)** Permitir el `dbwoutick_admin@%` actual (si ya existe con `%`). Verificá:
+  ```bash
+  mysql -u dbwoutick_admin -p -e "SELECT User, Host FROM mysql.user WHERE User='dbwoutick_admin';"
+  ```
+  Si no aparece `@%`, en cPanel → **Remote MySQL** → Add Access Host: `%`.
+
+- **(Más seguro, recomendado)** Crear un user dedicado `dbwoutick_ghactions` con INSERT/UPDATE solo sobre `ticket_scraping` + `ticket_public` + `leads_crm`, con grants desde `%`. Así aislás el alcance de la credencial si se compromete.
+
+### 2. Añadir GitHub Secrets
+
+En GitHub → repo → **Settings → Secrets and variables → Actions → New repository secret**. Crear estos 9 secrets:
+
+| Nombre | Valor |
+|---|---|
+| `DB_HOST` | `cpanel.woutick.es` |
+| `DB_PORT` | `3306` |
+| `DB_USER` | `dbwoutick_admin` (o `dbwoutick_ghactions` si creaste uno) |
+| `DB_PASS` | password del user |
+| `DB_PUBLIC` | `dbwoutick_ticket_public` |
+| `DB_SCRAPING` | `dbwoutick_ticket_scraping` |
+| `DB_LEADS` | `dbwoutick_leads_crm` |
+| `TICKETMASTER_API_KEY` | tu consumer key (el actual expuesto — rotar después) |
+| `TICKETMASTER_SECRET` | opcional, ECI no lo usa |
+
+### 3. Smoke test manual
+
+En GitHub → **Actions** → **Scrape ECI (every 12h)** → **Run workflow** (elegir branch `main`). Esperar ~5 min y revisar el log. Éxito esperado: `items_seen > 100`, `items_error <= 2`, `promoted > 100`.
+
+Después de eso, la Action corre automáticamente cada 12h sin intervención.
+
+## Alternativa local: Docker (si algún día se instala en el VPS)
+
+Si en el futuro el hosting instala docker o lo tenés en otro box, el Dockerfile y el wrapper `docker-run.sh` de este directorio siguen funcionando.
 
 ### 1. Build de la imagen (una sola vez)
 

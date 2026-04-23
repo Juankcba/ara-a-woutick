@@ -1,0 +1,85 @@
+name: Scrape ECI (every 12h)
+
+# Triggers:
+#  - Schedule: cada 12h (03:00 y 15:00 UTC = 05:00 y 17:00 Europe/Madrid en CEST,
+#    04:00 y 16:00 en CET). Ajustar si se prefiere horario local exacto.
+#  - workflow_dispatch: botón manual "Run workflow" desde la UI de GitHub.
+on:
+  schedule:
+    - cron: '0 3,15 * * *'
+  workflow_dispatch: {}
+
+# Solo una corrida a la vez por rama (evita solapes si el cron dispara
+# mientras todavía corre la anterior).
+concurrency:
+  group: scrape-eci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    name: Scrape + promote ECI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: scrapers
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Get pnpm store dir
+        id: pnpm-cache
+        shell: bash
+        run: echo "store=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('scrapers/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Scrape ECI
+        env:
+          # DB en el cPanel es reachable por internet vía cpanel.woutick.es:3306
+          # Requiere que el user MySQL tenga grants desde % (Remote MySQL → Add Host: %)
+          # o al menos desde el rango IP de GitHub Actions (ver docs: meta API).
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          DB_PUBLIC: ${{ secrets.DB_PUBLIC }}
+          DB_SCRAPING: ${{ secrets.DB_SCRAPING }}
+          DB_LEADS: ${{ secrets.DB_LEADS }}
+          TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
+          TICKETMASTER_SECRET: ${{ secrets.TICKETMASTER_SECRET }}
+        run: pnpm scrape elcorteingles
+
+      - name: Promote ECI
+        if: success()
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          DB_PUBLIC: ${{ secrets.DB_PUBLIC }}
+          DB_SCRAPING: ${{ secrets.DB_SCRAPING }}
+          DB_LEADS: ${{ secrets.DB_LEADS }}
+        run: pnpm promote elcorteingles 5000
