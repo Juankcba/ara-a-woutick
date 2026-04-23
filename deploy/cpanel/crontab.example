@@ -29,6 +29,16 @@ MAILTO=""
 10 5 * * *     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/promote_festivals_to_leads.ts >> /home/<CPANEL_USER>/logs/festivals-promote.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# Scrape contact pages — extrae emails+phones de /contacto /prensa /equipo
+# de las empresas con website y sin contacts. Martes 05:30.
+30 5 * * 2     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_contact_pages.ts --limit 100 >> /home/<CPANEL_USER>/logs/contact-scrape.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
+# Dedup companies. Idempotente (si no hay duplicados, no hace nada).
+# Martes 05:45 después del contact-scrape.
+45 5 * * 2     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/dedup_companies.ts --apply >> /home/<CPANEL_USER>/logs/dedup.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
 # ECI entradas — NO corre en cPanel cron. Requiere Playwright + Chromium.
 # El VPS cPanel no tiene docker instalado, así que lo movimos a
 # GitHub Actions (.github/workflows/scrape-eci.yml, cada 12h).
