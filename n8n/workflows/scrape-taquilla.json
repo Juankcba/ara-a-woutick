@@ -1,0 +1,87 @@
+{
+  "name": "Scrape Taquilla (24h)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "trigger-tq",
+      "name": "Daily at 03:00 Europe/Madrid",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/woutick-scrapers/scrapers && /usr/bin/env pnpm scrape taquilla"
+      },
+      "id": "scrape-tq",
+      "name": "pnpm scrape taquilla",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/woutick-scrapers/scrapers && /usr/bin/env pnpm promote taquilla 5000"
+      },
+      "id": "promote-tq",
+      "name": "pnpm promote taquilla",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily at 03:00 Europe/Madrid": {
+      "main": [
+        [
+          {
+            "node": "pnpm scrape taquilla",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pnpm scrape taquilla": {
+      "main": [
+        [
+          {
+            "node": "pnpm promote taquilla",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "Europe/Madrid",
+    "executionTimeout": 3600
+  },
+  "active": false,
+  "versionId": "1",
+  "triggerCount": 1,
+  "pinData": {}
+}

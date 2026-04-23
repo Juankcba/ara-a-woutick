@@ -1,0 +1,62 @@
+{
+  "name": "Scrape APM Musical (weekly)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "trigger-apm",
+      "name": "Lunes 04:00 Europe/Madrid",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/woutick-scrapers/scrapers && /usr/bin/env pnpm scrape apm_musical"
+      },
+      "id": "scrape-apm",
+      "name": "pnpm scrape apm_musical",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Lunes 04:00 Europe/Madrid": {
+      "main": [
+        [
+          {
+            "node": "pnpm scrape apm_musical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "Europe/Madrid"
+  },
+  "active": false,
+  "versionId": "1",
+  "triggerCount": 1,
+  "pinData": {}
+}

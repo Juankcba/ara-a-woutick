@@ -1,0 +1,117 @@
+{
+  "name": "Scrape Ticketmaster (12h)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 12
+            }
+          ]
+        }
+      },
+      "id": "trigger-tm",
+      "name": "Schedule every 12h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/woutick-scrapers/scrapers && /usr/bin/env pnpm scrape ticketmaster"
+      },
+      "id": "scrape-tm",
+      "name": "pnpm scrape ticketmaster",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/woutick-scrapers/scrapers && /usr/bin/env pnpm promote ticketmaster 5000"
+      },
+      "id": "promote-tm",
+      "name": "pnpm promote ticketmaster",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-exit",
+              "leftValue": "={{$node['pnpm scrape ticketmaster'].json.exitCode}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "error-check",
+      "name": "Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        460,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule every 12h": {
+      "main": [
+        [
+          {
+            "node": "pnpm scrape ticketmaster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pnpm scrape ticketmaster": {
+      "main": [
+        [
+          {
+            "node": "pnpm promote ticketmaster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "Europe/Madrid"
+  },
+  "active": false,
+  "versionId": "1",
+  "triggerCount": 1,
+  "pinData": {}
+}
