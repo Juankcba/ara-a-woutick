@@ -1,9 +1,77 @@
 import Link from "next/link";
-import { ArrowUpRight, Building2, Globe, Linkedin, Mail, Phone, Sparkles, Users } from "lucide-react";
+import {
+  ArrowUpRight,
+  Building2,
+  Globe,
+  Instagram,
+  Linkedin,
+  Mail,
+  Phone,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
-import { getCompanies, getCompanyStats, type CompanyCategory, type CompanyStatus } from "@/lib/leads";
+import { PromoterFilters } from "@/components/promoter-filters";
+import {
+  getCompanies,
+  getCompanyStats,
+  getDistinctCities,
+  type CompanyCategory,
+  type CompanyStatus,
+  type GetCompaniesOptions,
+} from "@/lib/leads";
 
 export const revalidate = 300;
+
+const VALID_CATEGORIES: CompanyCategory[] = [
+  "promoter",
+  "ticketing",
+  "venue",
+  "agency_production",
+  "agency_marketing",
+  "agency_booking",
+  "festival",
+  "fair",
+  "congress",
+  "hotel",
+  "camping",
+  "venue_complex",
+  "other",
+];
+
+const VALID_STATUSES: CompanyStatus[] = [
+  "new",
+  "enriching",
+  "enriched",
+  "contacted",
+  "qualified",
+  "won",
+  "lost",
+  "dnc",
+];
+
+function pickEnum<T extends string>(value: string | undefined, allowed: readonly T[]): T | undefined {
+  return value && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+}
+
+function asString(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function parseFilters(searchParams: Record<string, string | string[] | undefined>): GetCompaniesOptions {
+  return {
+    limit: 2000,
+    search: asString(searchParams.q)?.trim() || undefined,
+    category: pickEnum(asString(searchParams.category), VALID_CATEGORIES),
+    status: pickEnum(asString(searchParams.status), VALID_STATUSES),
+    source: asString(searchParams.source) || undefined,
+    city: asString(searchParams.city) || undefined,
+    hasInstagram: asString(searchParams.hasInstagram) === "1",
+    hasEmail: asString(searchParams.hasEmail) === "1",
+    hasPhone: asString(searchParams.hasPhone) === "1",
+  };
+}
 
 const CATEGORY_LABEL: Record<CompanyCategory, string> = {
   promoter: "Promotor",
@@ -43,11 +111,21 @@ const PLATFORM_COLOR: Record<string, string> = {
   manual: "bg-slate-300 text-slate-800",
 };
 
-export default async function PromotersPage() {
-  const [companies, stats] = await Promise.all([
-    getCompanies({ limit: 2000 }),
+interface PromotersPageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function PromotersPage({ searchParams }: PromotersPageProps) {
+  const params = await searchParams;
+  const filters = parseFilters(params);
+
+  const [companies, stats, cities] = await Promise.all([
+    getCompanies(filters),
     getCompanyStats(),
+    getDistinctCities(),
   ]);
+
+  const sources = Object.keys(stats.bySource).sort();
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -75,6 +153,8 @@ export default async function PromotersPage() {
 
           <StatsCards stats={stats} />
         </header>
+
+        <PromoterFilters sources={sources} cities={cities} />
 
         <section>
           <h2 className="text-sm font-semibold mb-3 text-foreground">
@@ -170,6 +250,17 @@ export default async function PromotersPage() {
                             <Linkedin className="w-3.5 h-3.5" />
                           </a>
                         )}
+                        {c.instagramUrl && (
+                          <a
+                            href={c.instagramUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="Instagram"
+                            className="hover:text-primary"
+                          >
+                            <Instagram className="w-3.5 h-3.5" />
+                          </a>
+                        )}
                         {c.email && (
                           <a
                             href={`mailto:${c.email}`}
@@ -188,7 +279,7 @@ export default async function PromotersPage() {
                             <Phone className="w-3.5 h-3.5" />
                           </a>
                         )}
-                        {!c.website && !c.linkedinUrl && !c.email && !c.phone && (
+                        {!c.website && !c.linkedinUrl && !c.instagramUrl && !c.email && !c.phone && (
                           <span className="text-xs">—</span>
                         )}
                       </div>
@@ -208,7 +299,7 @@ export default async function PromotersPage() {
 
           {companies.length === 0 && (
             <div className="text-center py-16 text-muted-foreground text-sm">
-              Aún no hay empresas en la base. Correr scrapers para poblarla.
+              No hay empresas que coincidan con los filtros aplicados.
             </div>
           )}
         </section>
