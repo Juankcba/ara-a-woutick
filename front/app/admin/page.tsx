@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Activity, AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock, Settings, XCircle } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import {
   getRecentErrors,
@@ -55,9 +55,18 @@ export default async function AdminPage({ searchParams }: PageProps) {
               Última corrida por fuente, histórico reciente y errores 24h. Refresh cada 60s.
             </p>
           </div>
-          <Link href="/promoters" className="text-sm text-primary hover:underline">
-            Ir a Organizadores →
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href={token ? `/admin/scrapers?token=${encodeURIComponent(token)}` : "/admin/scrapers"}
+              className="text-sm font-medium text-foreground hover:text-primary inline-flex items-center gap-1"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Configurar scrapers
+            </Link>
+            <Link href="/promoters" className="text-sm text-primary hover:underline">
+              Organizadores →
+            </Link>
+          </div>
         </header>
 
         <section className="mb-8">
