@@ -47,7 +47,7 @@ export function AdminSourceFilters({ basePath }: { basePath: string }) {
     update(key, v === ALL ? null : v);
   }
 
-  const activeCount = ["q", "competitor", "state"].filter((k) => params.get(k)).length;
+  const activeCount = ["q", "competitor", "state", "configStatus"].filter((k) => params.get(k)).length;
 
   return (
     <div className="rounded-xl border border-border bg-card p-3 mb-4">
@@ -82,6 +82,19 @@ export function AdminSourceFilters({ basePath }: { basePath: string }) {
             <SelectItem value="active">Activas</SelectItem>
             <SelectItem value="inactive">Inactivas</SelectItem>
             <SelectItem value="never_ran">Nunca scrapeadas</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={pickValue("configStatus")} onValueChange={(v) => setSelect("configStatus", v)}>
+          <SelectTrigger className="w-[170px]">
+            <SelectValue placeholder="Config" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Cualquier config</SelectItem>
+            <SelectItem value="empty">Sin configurar</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="tested">Probado</SelectItem>
+            <SelectItem value="production">En producción</SelectItem>
           </SelectContent>
         </Select>
 

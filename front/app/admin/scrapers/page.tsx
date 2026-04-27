@@ -12,10 +12,21 @@ import { AdminSourceFilters } from "@/components/admin-source-filters";
 import { SourceRowActions } from "@/components/source-row-actions";
 import {
   getAdminSources,
+  type ConfigStatus,
   type GetAdminSourcesOptions,
   type RunStatus,
   type SourceAdminRow,
 } from "@/lib/scraping";
+
+const CONFIG_STATUS_META: Record<
+  ConfigStatus,
+  { label: string; className: string }
+> = {
+  empty: { label: "Sin config", className: "bg-gray-100 text-gray-600 border-gray-200" },
+  draft: { label: "Draft", className: "bg-amber-100 text-amber-700 border-amber-200" },
+  tested: { label: "Probado", className: "bg-blue-100 text-blue-700 border-blue-200" },
+  production: { label: "En producción", className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+};
 
 export const dynamic = "force-dynamic";
 
@@ -41,11 +52,14 @@ function asString(v: string | string[] | undefined): string | undefined {
 function parseFilters(p: Record<string, string | string[] | undefined>): GetAdminSourcesOptions {
   const competitor = asString(p.competitor);
   const state = asString(p.state);
+  const cs = asString(p.configStatus);
+  const validCs: readonly ConfigStatus[] = ["empty", "draft", "tested", "production"];
   return {
     search: asString(p.q)?.trim() || undefined,
     competitor: competitor === "yes" || competitor === "no" ? competitor : "all",
     state:
       state === "active" || state === "inactive" || state === "never_ran" ? state : "all",
+    configStatus: cs && (validCs as readonly string[]).includes(cs) ? (cs as ConfigStatus) : "all",
   };
 }
 
@@ -62,7 +76,9 @@ export default async function AdminScrapersPage({ searchParams }: PageProps) {
   const competitorTotal = sources.filter((s) => s.isCompetitor).length;
   const seedTotal = sources.length - competitorTotal;
   const activeTotal = sources.filter((s) => s.active).length;
-  const neverRanTotal = sources.filter((s) => s.lastRunAt == null).length;
+  const productionTotal = sources.filter((s) => s.configStatus === "production").length;
+  const draftTotal = sources.filter((s) => s.configStatus === "draft" || s.configStatus === "tested").length;
+  const emptyTotal = sources.filter((s) => s.configStatus === "empty").length;
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -88,14 +104,15 @@ export default async function AdminScrapersPage({ searchParams }: PageProps) {
           </Link>
         </header>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
           <Stat label="Total" value={sources.length} />
-          <Stat label="Activas" value={activeTotal} highlight={activeTotal === 0 ? "amber" : undefined} />
-          <Stat label="Competencia" value={competitorTotal} />
+          <Stat label="Activas" value={activeTotal} />
+          <Stat label="En producción" value={productionTotal} highlight="emerald" />
+          <Stat label="Draft / probadas" value={draftTotal} highlight="amber" />
           <Stat
-            label="Nunca scrapeadas"
-            value={neverRanTotal}
-            highlight={neverRanTotal > 0 ? "amber" : undefined}
+            label="Sin configurar"
+            value={emptyTotal}
+            highlight={emptyTotal > 0 ? "red" : undefined}
           />
         </div>
 
@@ -107,9 +124,8 @@ export default async function AdminScrapersPage({ searchParams }: PageProps) {
               <tr className="text-left">
                 <Th>Fuente</Th>
                 <Th>URL</Th>
-                <Th>Tipo</Th>
+                <Th>Config</Th>
                 <Th className="text-center">Dif.</Th>
-                <Th>Marca blanca</Th>
                 <Th>Última corrida</Th>
                 <Th className="text-right">Runs</Th>
                 <Th className="text-right">Eventos</Th>
@@ -173,22 +189,16 @@ function SourceTableRow({ source: s, token }: { source: SourceAdminRow; token?: 
         )}
       </td>
       <td className="px-3 py-2 align-top">
-        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] uppercase font-semibold bg-secondary text-secondary-foreground">
-          {s.kind}
-        </span>
+        <ConfigStatusBadge status={s.configStatus} />
+        {s.whiteLabelOf && (
+          <div className="text-[10px] text-muted-foreground mt-0.5">
+            wl: {s.whiteLabelOf}
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 align-top text-center">
         {s.difficulty != null ? (
           <span className="font-mono text-xs tabular-nums">{s.difficulty}</span>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </td>
-      <td className="px-3 py-2 align-top text-xs">
-        {s.whiteLabelOf ? (
-          <span className="inline-block max-w-[160px] truncate" title={s.whiteLabelOf}>
-            {s.whiteLabelOf}
-          </span>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
@@ -221,6 +231,17 @@ function SourceTableRow({ source: s, token }: { source: SourceAdminRow; token?: 
   );
 }
 
+function ConfigStatusBadge({ status }: { status: ConfigStatus }) {
+  const meta = CONFIG_STATUS_META[status];
+  return (
+    <span
+      className={`inline-flex w-fit items-center rounded px-1.5 py-0.5 text-[10px] font-semibold border ${meta.className}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 function RunBadge({ status }: { status: RunStatus | null }) {
   if (!status) return <span className="text-muted-foreground">—</span>;
   const meta = STATUS_META[status];
@@ -242,10 +263,16 @@ function Stat({
 }: {
   label: string;
   value: number;
-  highlight?: "amber" | "red";
+  highlight?: "amber" | "red" | "emerald";
 }) {
   const valColor =
-    highlight === "amber" ? "text-amber-600" : highlight === "red" ? "text-red-600" : "";
+    highlight === "amber"
+      ? "text-amber-600"
+      : highlight === "red"
+        ? "text-red-600"
+        : highlight === "emerald"
+          ? "text-emerald-600"
+          : "";
   return (
     <div className="rounded-lg border border-border bg-card px-4 py-3">
       <div className="text-xs text-muted-foreground">{label}</div>
