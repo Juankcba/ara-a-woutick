@@ -60,7 +60,21 @@ interface SelectorsStrategy {
   };
 }
 
-type Strategy = SitemapStrategy | JsonLdStrategy | SelectorsStrategy;
+interface PlaywrightStrategy {
+  type: 'playwright';
+  listing_url: string;
+  // Qué extraer DESPUÉS de que la página renderice. 'jsonld' = parsea JSON-LD
+  // del HTML final (cubre la mayoría — Cloudflare-passed sites con SSR-tras-JS).
+  // 'next_data' = parsea __NEXT_DATA__ JSON (Next.js SPAs). 'selectors' = aplica
+  // CSS selectors sobre el HTML hidratado (igual que strategy=selectors).
+  extract: 'jsonld' | 'next_data' | { selectors: SelectorsStrategy['fields'] & { event_card: string } };
+  wait_ms?: number;                  // default 3000 — tras goto, antes de extraer
+  wait_for_selector?: string;        // si se setea, espera por ese selector antes
+  scroll?: boolean;                  // default true — scroll para lazy-load
+  scroll_steps?: number;             // default 8
+}
+
+type Strategy = SitemapStrategy | JsonLdStrategy | SelectorsStrategy | PlaywrightStrategy;
 
 export interface ScraperConfig {
   strategy: Strategy;
@@ -171,6 +185,9 @@ export async function runGeneric(
       break;
     case 'selectors':
       await runSelectorsStrategy(ctx, config.strategy);
+      break;
+    case 'playwright':
+      await runPlaywrightStrategy(ctx, config.strategy);
       break;
   }
 
@@ -610,6 +627,203 @@ function parsePriceFromText(txt: string | null): number | null {
   if (!m) return null;
   const n = Number(m[1].replace(',', '.'));
   return Number.isFinite(n) ? n : null;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Strategy: playwright (browser real para CF challenges + SPAs)
+// ────────────────────────────────────────────────────────────────────
+
+async function runPlaywrightStrategy(ctx: RunContext, s: PlaywrightStrategy): Promise<void> {
+  // Dynamic import: si nadie usa playwright en una run, no se cargan los binarios.
+  const { chromium } = await import('playwright-extra');
+  const stealth = (await import('puppeteer-extra-plugin-stealth')).default;
+  chromium.use(stealth());
+
+  const url = resolveUrl(s.listing_url, ctx.baseUrl);
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled'],
+  });
+  try {
+    const browserCtx = await browser.newContext({
+      userAgent: ctx.userAgent,
+      locale: 'es-ES',
+      timezoneId: 'Europe/Madrid',
+      viewport: { width: 1440, height: 900 },
+    });
+    const page = await browserCtx.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+    if (s.wait_for_selector) {
+      try {
+        await page.waitForSelector(s.wait_for_selector, { timeout: 15_000 });
+      } catch {
+        await reportError(ctx, `wait_for_selector timeout: ${s.wait_for_selector}`, {
+          url,
+          errorCode: 'pw_wait_timeout',
+        });
+      }
+    }
+    await page.waitForTimeout(s.wait_ms ?? 3000);
+
+    if (s.scroll !== false) {
+      const steps = s.scroll_steps ?? 8;
+      for (let i = 0; i < steps; i++) {
+        await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+        await page.waitForTimeout(400);
+      }
+    }
+
+    const html = await page.content();
+    await reportError(ctx, `playwright loaded ${html.length} chars from ${url}`, {
+      errorCode: 'info',
+      url,
+    });
+
+    let events: GenericRawEvent[] = [];
+    if (s.extract === 'jsonld') {
+      events = parseJsonLdEvents(html, url, ctx);
+    } else if (s.extract === 'next_data') {
+      events = parseNextDataEvents(html, url, ctx);
+    } else {
+      events = parseSelectorsFromHtml(html, url, ctx, s.extract.selectors);
+    }
+
+    for (const ev of events) {
+      if (maxItemsReached(ctx)) break;
+      await emitEvent(ctx, ev);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+// Parsea __NEXT_DATA__ de Next.js para sitios que solo exponen eventos
+// en el JSON server-side props. Heurística: encontrar arrays de objetos
+// que tengan name + (startDate|date|datetime) + (location|venue).
+function parseNextDataEvents(html: string, pageUrl: string, ctx: RunContext): GenericRawEvent[] {
+  const $ = cheerio.load(html);
+  const socials = extractSocials($);
+  const script = $('#__NEXT_DATA__').contents().text();
+  if (!script.trim()) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(script);
+  } catch {
+    return [];
+  }
+
+  const events: GenericRawEvent[] = [];
+  const seen = new Set<string>();
+
+  function looksLikeEvent(o: Record<string, unknown>): boolean {
+    if (!o || typeof o !== 'object') return false;
+    const hasName = typeof o.name === 'string' || typeof o.title === 'string';
+    const hasDate =
+      typeof o.startDate === 'string' ||
+      typeof o.date === 'string' ||
+      typeof o.datetime === 'string' ||
+      typeof o.event_date === 'string';
+    return hasName && hasDate;
+  }
+
+  function nodeToEvent(o: Record<string, unknown>): GenericRawEvent | null {
+    const url =
+      (typeof o.url === 'string' && o.url) ||
+      (typeof o.slug === 'string' && new URL(`/${o.slug}`, pageUrl).href) ||
+      pageUrl;
+    if (seen.has(url)) return null;
+    seen.add(url);
+
+    const name = (typeof o.name === 'string' && o.name) || (typeof o.title === 'string' && o.title) || null;
+    const startDate =
+      (typeof o.startDate === 'string' && o.startDate) ||
+      (typeof o.date === 'string' && o.date) ||
+      (typeof o.datetime === 'string' && o.datetime) ||
+      null;
+    const venueRaw = (o.venue ?? o.location) as Record<string, unknown> | string | undefined;
+    const venueName =
+      typeof venueRaw === 'string'
+        ? venueRaw
+        : (venueRaw && typeof venueRaw === 'object' && typeof venueRaw.name === 'string'
+            ? venueRaw.name
+            : null);
+
+    return {
+      ...emptyEvent(ctx, url),
+      externalId: url,
+      url,
+      name,
+      startDate,
+      venue: { ...emptyVenue(), name: venueName },
+      socials,
+    };
+  }
+
+  function walk(node: unknown): void {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const n of node) walk(n);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    if (looksLikeEvent(obj)) {
+      const ev = nodeToEvent(obj);
+      if (ev) events.push(ev);
+    }
+    for (const v of Object.values(obj)) walk(v);
+  }
+
+  walk(parsed);
+  return events;
+}
+
+// Aplica selectors style sobre HTML pre-renderizado (post-Playwright).
+function parseSelectorsFromHtml(
+  html: string,
+  pageUrl: string,
+  ctx: RunContext,
+  spec: { event_card: string } & SelectorsStrategy['fields'],
+): GenericRawEvent[] {
+  const $ = cheerio.load(html);
+  const socials = extractSocials($);
+  const cards = $(spec.event_card).toArray();
+  const out: GenericRawEvent[] = [];
+
+  for (let idx = 0; idx < cards.length; idx++) {
+    const $el = $(cards[idx]);
+    const pick = (sel?: string): string | null => {
+      if (!sel) return null;
+      const t = $el.find(sel).first();
+      return t.text().trim() || t.attr('content')?.trim() || null;
+    };
+    let href: string | undefined;
+    if (spec.url) href = $el.find(spec.url).first().attr('href') ?? undefined;
+    if (!href && $el.is('a')) href = $el.attr('href') ?? undefined;
+    if (!href) href = $el.find('a').first().attr('href') ?? undefined;
+    const eventUrl = href ? resolveUrl(href, ctx.baseUrl) : `${pageUrl}#card-${idx}`;
+
+    out.push({
+      ...emptyEvent(ctx, eventUrl),
+      externalId: eventUrl,
+      url: eventUrl,
+      name: pick(spec.title),
+      startDate: pick(spec.datetime),
+      image: spec.image
+        ? $el.find(spec.image).first().attr('src') ?? null
+        : ($el.find('img').first().attr('src') ?? null),
+      venue: { ...emptyVenue(), name: pick(spec.venue) },
+      offers: {
+        lowPrice: parsePriceFromText(pick(spec.price)),
+        highPrice: null,
+        currency: 'EUR',
+        availability: null,
+      },
+      socials,
+    });
+  }
+  return out;
 }
 
 // ────────────────────────────────────────────────────────────────────
