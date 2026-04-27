@@ -55,6 +55,29 @@ export interface SourceStatus {
   okRate: number | null; // % OK sobre últimas 10
 }
 
+export interface SourceAdminRow {
+  id: number;
+  slug: string;
+  name: string;
+  kind: 'api' | 'html' | 'hybrid';
+  baseUrl: string | null;
+  active: boolean;
+  difficulty: number | null;
+  isCompetitor: boolean;
+  description: string | null;
+  notes: string | null;
+  whiteLabelOf: string | null;
+  cashless: 'yes' | 'no' | 'unknown';
+  instagramUrl: string | null;
+  config: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+  lastRunAt: Date | null;
+  lastRunStatus: RunStatus | null;
+  totalRuns: number;
+  totalEvents: number;
+}
+
 export interface ErrorRow {
   id: number;
   runId: number;
@@ -150,6 +173,143 @@ export async function getSources(): Promise<SourceStatus[]> {
   );
 
   return results;
+}
+
+export interface GetAdminSourcesOptions {
+  search?: string;
+  competitor?: 'all' | 'yes' | 'no';
+  state?: 'all' | 'active' | 'inactive' | 'never_ran';
+}
+
+interface RawAdminRow {
+  id: number;
+  slug: string;
+  name: string;
+  kind: 'api' | 'html' | 'hybrid';
+  base_url: string | null;
+  active: number;
+  difficulty: number | null;
+  is_competitor: number;
+  description: string | null;
+  notes: string | null;
+  white_label_of: string | null;
+  cashless: 'yes' | 'no' | 'unknown';
+  instagram_url: string | null;
+  config: unknown;
+  created_at: Date;
+  updated_at: Date;
+  last_run_at: Date | null;
+  last_run_status: RunStatus | null;
+  total_runs: string | number | null;
+  total_events: string | number | null;
+}
+
+export async function getAdminSources(opts: GetAdminSourcesOptions = {}): Promise<SourceAdminRow[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (opts.search) {
+    where.push('(s.slug LIKE ? OR s.name LIKE ? OR s.base_url LIKE ?)');
+    const term = `%${opts.search}%`;
+    params.push(term, term, term);
+  }
+  if (opts.competitor === 'yes') where.push('s.is_competitor = TRUE');
+  else if (opts.competitor === 'no') where.push('s.is_competitor = FALSE');
+
+  if (opts.state === 'active') where.push('s.active = TRUE');
+  else if (opts.state === 'inactive') where.push('s.active = FALSE');
+  else if (opts.state === 'never_ran')
+    where.push('NOT EXISTS (SELECT 1 FROM scraping_runs r WHERE r.source_id = s.id)');
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const [rows] = await getPool().query<mysql.RowDataPacket[]>(
+    `
+    SELECT
+      s.id, s.slug, s.name, s.kind, s.base_url, s.active, s.difficulty,
+      s.is_competitor, s.description, s.notes, s.white_label_of, s.cashless,
+      s.instagram_url, s.config, s.created_at, s.updated_at,
+      lr.started_at AS last_run_at,
+      lr.status     AS last_run_status,
+      (SELECT COUNT(*) FROM scraping_runs r WHERE r.source_id = s.id)               AS total_runs,
+      (SELECT COALESCE(SUM(items_new + items_updated), 0)
+         FROM scraping_runs r WHERE r.source_id = s.id)                              AS total_events
+    FROM sources s
+    LEFT JOIN (
+      SELECT source_id, started_at, status
+        FROM scraping_runs r1
+       WHERE id = (SELECT MAX(id) FROM scraping_runs r2 WHERE r2.source_id = r1.source_id)
+    ) lr ON lr.source_id = s.id
+    ${whereSql}
+    ORDER BY s.is_competitor ASC, s.difficulty ASC, s.slug ASC
+    `,
+    params,
+  );
+
+  return (rows as unknown as RawAdminRow[]).map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    kind: r.kind,
+    baseUrl: r.base_url,
+    active: Boolean(r.active),
+    difficulty: r.difficulty,
+    isCompetitor: Boolean(r.is_competitor),
+    description: r.description,
+    notes: r.notes,
+    whiteLabelOf: r.white_label_of,
+    cashless: r.cashless,
+    instagramUrl: r.instagram_url,
+    config: r.config,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    lastRunAt: r.last_run_at,
+    lastRunStatus: r.last_run_status,
+    totalRuns: Number(r.total_runs ?? 0),
+    totalEvents: Number(r.total_events ?? 0),
+  }));
+}
+
+export async function updateAdminSource(
+  id: number,
+  patch: {
+    active?: boolean;
+    config?: unknown;
+    notes?: string | null;
+    description?: string | null;
+    instagramUrl?: string | null;
+  },
+): Promise<SourceAdminRow | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (patch.active !== undefined) {
+    sets.push('active = ?');
+    params.push(patch.active ? 1 : 0);
+  }
+  if (patch.config !== undefined) {
+    sets.push('config = CAST(? AS JSON)');
+    params.push(JSON.stringify(patch.config ?? {}));
+  }
+  if (patch.notes !== undefined) {
+    sets.push('notes = ?');
+    params.push(patch.notes);
+  }
+  if (patch.description !== undefined) {
+    sets.push('description = ?');
+    params.push(patch.description);
+  }
+  if (patch.instagramUrl !== undefined) {
+    sets.push('instagram_url = ?');
+    params.push(patch.instagramUrl);
+  }
+  if (sets.length === 0) return null;
+
+  params.push(id);
+  await getPool().query(`UPDATE sources SET ${sets.join(', ')} WHERE id = ?`, params);
+
+  const rows = await getAdminSources();
+  return rows.find((r) => r.id === id) ?? null;
 }
 
 export async function getRecentRuns(limit = 30): Promise<RunRow[]> {
