@@ -64,6 +64,9 @@ export interface CompanyRow {
   email: string | null;
   phone: string | null;
   linkedinUrl: string | null;
+  instagramUrl: string | null;
+  facebookUrl: string | null;
+  twitterUrl: string | null;
   industry: string | null;
   employeesSize: string | null;
   employeesExact: number | null;
@@ -85,6 +88,9 @@ interface RawRow {
   email: string | null;
   phone: string | null;
   linkedin_url: string | null;
+  instagram_url: string | null;
+  facebook_url: string | null;
+  twitter_url: string | null;
   industry: string | null;
   employees_size: string | null;
   employees_exact: number | null;
@@ -98,18 +104,62 @@ interface RawRow {
 export interface GetCompaniesOptions {
   limit?: number;
   category?: CompanyCategory;
+  status?: CompanyStatus;
+  source?: string;
+  city?: string;
+  search?: string;
+  hasInstagram?: boolean;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
 }
 
 export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<CompanyRow[]> {
   const limit = opts.limit ?? 500;
-  const whereCat = opts.category ? 'WHERE c.category = ?' : '';
-  const params: unknown[] = opts.category ? [opts.category, limit] : [limit];
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (opts.category) {
+    where.push('c.category = ?');
+    params.push(opts.category);
+  }
+  if (opts.status) {
+    where.push('c.status = ?');
+    params.push(opts.status);
+  }
+  if (opts.city) {
+    where.push('c.city = ?');
+    params.push(opts.city);
+  }
+  if (opts.hasInstagram) {
+    where.push("c.instagram_url IS NOT NULL AND c.instagram_url <> ''");
+  }
+  if (opts.hasEmail) {
+    where.push("c.email IS NOT NULL AND c.email <> ''");
+  }
+  if (opts.hasPhone) {
+    where.push("c.phone IS NOT NULL AND c.phone <> ''");
+  }
+  if (opts.search) {
+    where.push('(c.name LIKE ? OR c.website LIKE ? OR c.email LIKE ?)');
+    const term = `%${opts.search}%`;
+    params.push(term, term, term);
+  }
+  if (opts.source) {
+    where.push(
+      'EXISTS (SELECT 1 FROM company_sources cs WHERE cs.company_id = c.id AND cs.source_platform = ?)',
+    );
+    params.push(opts.source);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  params.push(limit);
 
   const [rows] = await getPool().query<mysql.RowDataPacket[]>(
     `
     SELECT
       c.id, c.name, c.legal_name, c.category, c.parent_company,
-      c.city, c.website, c.email, c.phone, c.linkedin_url,
+      c.city, c.website, c.email, c.phone,
+      c.linkedin_url, c.instagram_url, c.facebook_url, c.twitter_url,
       c.industry, c.employees_size, c.employees_exact,
       c.status, c.enrichment_source,
       COALESCE(SUM(s.events_count), 0)           AS total_events,
@@ -117,7 +167,7 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
       MAX(s.last_seen_at)                         AS last_seen_at
     FROM companies c
     LEFT JOIN company_sources s ON s.company_id = c.id
-    ${whereCat}
+    ${whereSql}
     GROUP BY c.id
     ORDER BY total_events DESC, c.name ASC
     LIMIT ?
@@ -136,6 +186,9 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
     email: r.email,
     phone: r.phone,
     linkedinUrl: r.linkedin_url,
+    instagramUrl: r.instagram_url,
+    facebookUrl: r.facebook_url,
+    twitterUrl: r.twitter_url,
     industry: r.industry,
     employeesSize: r.employees_size,
     employeesExact: r.employees_exact,
@@ -145,6 +198,15 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
     lastSeenAt: r.last_seen_at,
     enrichmentSource: r.enrichment_source,
   }));
+}
+
+export async function getDistinctCities(): Promise<string[]> {
+  const [rows] = await getPool().query<mysql.RowDataPacket[]>(
+    `SELECT DISTINCT city FROM companies
+       WHERE city IS NOT NULL AND city <> ''
+       ORDER BY city ASC`,
+  );
+  return rows.map((r) => r.city as string);
 }
 
 export interface CompanyStats {
