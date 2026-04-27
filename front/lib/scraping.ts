@@ -55,6 +55,8 @@ export interface SourceStatus {
   okRate: number | null; // % OK sobre últimas 10
 }
 
+export type ConfigStatus = 'empty' | 'draft' | 'tested' | 'production';
+
 export interface SourceAdminRow {
   id: number;
   slug: string;
@@ -69,6 +71,7 @@ export interface SourceAdminRow {
   whiteLabelOf: string | null;
   cashless: 'yes' | 'no' | 'unknown';
   instagramUrl: string | null;
+  configStatus: ConfigStatus;
   config: unknown;
   createdAt: Date;
   updatedAt: Date;
@@ -179,6 +182,7 @@ export interface GetAdminSourcesOptions {
   search?: string;
   competitor?: 'all' | 'yes' | 'no';
   state?: 'all' | 'active' | 'inactive' | 'never_ran';
+  configStatus?: 'all' | ConfigStatus;
 }
 
 interface RawAdminRow {
@@ -195,6 +199,7 @@ interface RawAdminRow {
   white_label_of: string | null;
   cashless: 'yes' | 'no' | 'unknown';
   instagram_url: string | null;
+  config_status: ConfigStatus;
   config: unknown;
   created_at: Date;
   updated_at: Date;
@@ -221,6 +226,11 @@ export async function getAdminSources(opts: GetAdminSourcesOptions = {}): Promis
   else if (opts.state === 'never_ran')
     where.push('NOT EXISTS (SELECT 1 FROM scraping_runs r WHERE r.source_id = s.id)');
 
+  if (opts.configStatus && opts.configStatus !== 'all') {
+    where.push('s.config_status = ?');
+    params.push(opts.configStatus);
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const [rows] = await getPool().query<mysql.RowDataPacket[]>(
@@ -228,7 +238,7 @@ export async function getAdminSources(opts: GetAdminSourcesOptions = {}): Promis
     SELECT
       s.id, s.slug, s.name, s.kind, s.base_url, s.active, s.difficulty,
       s.is_competitor, s.description, s.notes, s.white_label_of, s.cashless,
-      s.instagram_url, s.config, s.created_at, s.updated_at,
+      s.instagram_url, s.config_status, s.config, s.created_at, s.updated_at,
       lr.started_at AS last_run_at,
       lr.status     AS last_run_status,
       (SELECT COUNT(*) FROM scraping_runs r WHERE r.source_id = s.id)               AS total_runs,
@@ -260,6 +270,7 @@ export async function getAdminSources(opts: GetAdminSourcesOptions = {}): Promis
     whiteLabelOf: r.white_label_of,
     cashless: r.cashless,
     instagramUrl: r.instagram_url,
+    configStatus: r.config_status,
     config: r.config,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -278,6 +289,7 @@ export async function updateAdminSource(
     notes?: string | null;
     description?: string | null;
     instagramUrl?: string | null;
+    configStatus?: ConfigStatus;
   },
 ): Promise<SourceAdminRow | null> {
   const sets: string[] = [];
@@ -290,6 +302,18 @@ export async function updateAdminSource(
   if (patch.config !== undefined) {
     sets.push('config = CAST(? AS JSON)');
     params.push(JSON.stringify(patch.config ?? {}));
+    // Si guardamos config con strategy y estábamos en 'empty', auto-marcar 'draft'
+    const hasStrategy =
+      patch.config &&
+      typeof patch.config === 'object' &&
+      'strategy' in (patch.config as Record<string, unknown>);
+    if (hasStrategy && patch.configStatus === undefined) {
+      sets.push(`config_status = IF(config_status = 'empty', 'draft', config_status)`);
+    }
+  }
+  if (patch.configStatus !== undefined) {
+    sets.push('config_status = ?');
+    params.push(patch.configStatus);
   }
   if (patch.notes !== undefined) {
     sets.push('notes = ?');

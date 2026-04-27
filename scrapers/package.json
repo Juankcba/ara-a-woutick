@@ -6,6 +6,8 @@
   "scripts": {
     "scrape": "tsx bin/scrape.ts",
     "promote": "tsx bin/promote.ts",
+    "probe": "tsx bin/probe_ticketera.ts",
+    "test-scraper": "tsx bin/test_scraper.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
