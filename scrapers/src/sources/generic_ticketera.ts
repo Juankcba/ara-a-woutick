@@ -121,7 +121,8 @@ export interface RunResult extends RunStats {
 
 const DEFAULT_DELAY_MS = 1500;
 const DEFAULT_USER_AGENT =
-  'Mozilla/5.0 (compatible; WoutickBot/1.0; +https://woutick.es/bot)';
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 const FETCH_TIMEOUT_MS = 20_000;
 const SAFETY_MAX_URLS = 200;
 
@@ -236,9 +237,13 @@ function resolveUrl(maybeRelative: string, base: string): string {
   }
 }
 
+function maxItemsReached(ctx: RunContext): boolean {
+  return ctx.options.maxItems !== undefined && ctx.stats.items_seen >= ctx.options.maxItems;
+}
+
 async function emitEvent(ctx: RunContext, event: GenericRawEvent): Promise<void> {
+  if (maxItemsReached(ctx)) return;
   ctx.stats.items_seen++;
-  if (ctx.options.maxItems && ctx.stats.items_seen > ctx.options.maxItems) return;
 
   if (ctx.options.dryRun) {
     ctx.preview?.push(event);
@@ -302,6 +307,7 @@ async function runSitemapStrategy(ctx: RunContext, s: SitemapStrategy): Promise<
 
   // Modo "fetch each": para cada URL, descargar página y parsear JSON-LD
   for (const u of slice) {
+    if (maxItemsReached(ctx)) break;
     try {
       const html = await fetchText(u, ctx.userAgent);
       const events = parseJsonLdEvents(html, u, ctx);
@@ -309,7 +315,10 @@ async function runSitemapStrategy(ctx: RunContext, s: SitemapStrategy): Promise<
         // Si no hay JSON-LD, al menos guardamos URL+title del HTML
         events.push(parseHtmlMinimum(html, u, ctx));
       }
-      for (const ev of events) await emitEvent(ctx, ev);
+      for (const ev of events) {
+        if (maxItemsReached(ctx)) break;
+        await emitEvent(ctx, ev);
+      }
     } catch (err) {
       ctx.stats.items_error++;
       await reportError(ctx,err instanceof Error ? err.message : String(err), {
@@ -551,16 +560,24 @@ async function runSelectorsStrategy(ctx: RunContext, s: SelectorsStrategy): Prom
   const cards = $(s.event_card);
   await reportError(ctx,`selectors: ${cards.length} cards`, { errorCode: 'info', url });
 
-  cards.each((_, el) => {
-    const $el = $(el);
+  const cardArr = cards.toArray();
+  for (let idx = 0; idx < cardArr.length; idx++) {
+    const $el = $(cardArr[idx]);
     const pick = (sel?: string): string | null => {
       if (!sel) return null;
       const t = $el.find(sel).first();
       const txt = t.text().trim();
       return txt || t.attr('content')?.trim() || null;
     };
-    const href = s.fields.url ? $el.find(s.fields.url).first().attr('href') : null;
-    const eventUrl = href ? resolveUrl(href, ctx.baseUrl) : url;
+    // URL resolution con varios fallbacks:
+    //   1) selector explícito en fields.url
+    //   2) card mismo si es <a>
+    //   3) primer <a> dentro del card
+    let href: string | undefined;
+    if (s.fields.url) href = $el.find(s.fields.url).first().attr('href') ?? undefined;
+    if (!href && $el.is('a')) href = $el.attr('href') ?? undefined;
+    if (!href) href = $el.find('a').first().attr('href') ?? undefined;
+    const eventUrl = href ? resolveUrl(href, ctx.baseUrl) : `${url}#card-${idx}`;
 
     const ev: GenericRawEvent = {
       ...emptyEvent(ctx, eventUrl),
@@ -568,7 +585,9 @@ async function runSelectorsStrategy(ctx: RunContext, s: SelectorsStrategy): Prom
       url: eventUrl,
       name: pick(s.fields.title),
       startDate: pick(s.fields.datetime),
-      image: s.fields.image ? $el.find(s.fields.image).first().attr('src') ?? null : null,
+      image: s.fields.image
+        ? $el.find(s.fields.image).first().attr('src') ?? null
+        : ($el.find('img').first().attr('src') ?? null),
       venue: {
         ...emptyVenue(),
         name: pick(s.fields.venue),
@@ -581,8 +600,8 @@ async function runSelectorsStrategy(ctx: RunContext, s: SelectorsStrategy): Prom
       },
       socials,
     };
-    void emitEvent(ctx, ev);
-  });
+    await emitEvent(ctx, ev);
+  }
 }
 
 function parsePriceFromText(txt: string | null): number | null {
