@@ -91,10 +91,11 @@ export function AdminSourceFilters({ basePath }: { basePath: string }) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>Cualquier config</SelectItem>
-            <SelectItem value="empty">Sin configurar</SelectItem>
+            <SelectItem value="empty">Sin investigar</SelectItem>
             <SelectItem value="draft">Draft</SelectItem>
             <SelectItem value="tested">Probado</SelectItem>
             <SelectItem value="production">En producción</SelectItem>
+            <SelectItem value="descartado">Descartado</SelectItem>
           </SelectContent>
         </Select>
 

@@ -55,7 +55,7 @@ export interface SourceStatus {
   okRate: number | null; // % OK sobre últimas 10
 }
 
-export type ConfigStatus = 'empty' | 'draft' | 'tested' | 'production';
+export type ConfigStatus = 'empty' | 'draft' | 'tested' | 'production' | 'descartado';
 
 export interface SourceAdminRow {
   id: number;

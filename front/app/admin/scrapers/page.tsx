@@ -22,10 +22,11 @@ const CONFIG_STATUS_META: Record<
   ConfigStatus,
   { label: string; className: string }
 > = {
-  empty: { label: "Sin config", className: "bg-gray-100 text-gray-600 border-gray-200" },
+  empty: { label: "Sin investigar", className: "bg-gray-100 text-gray-600 border-gray-200" },
   draft: { label: "Draft", className: "bg-amber-100 text-amber-700 border-amber-200" },
   tested: { label: "Probado", className: "bg-blue-100 text-blue-700 border-blue-200" },
   production: { label: "En producción", className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  descartado: { label: "Descartado", className: "bg-zinc-200 text-zinc-600 border-zinc-300 line-through" },
 };
 
 export const dynamic = "force-dynamic";
@@ -53,7 +54,7 @@ function parseFilters(p: Record<string, string | string[] | undefined>): GetAdmi
   const competitor = asString(p.competitor);
   const state = asString(p.state);
   const cs = asString(p.configStatus);
-  const validCs: readonly ConfigStatus[] = ["empty", "draft", "tested", "production"];
+  const validCs: readonly ConfigStatus[] = ["empty", "draft", "tested", "production", "descartado"];
   return {
     search: asString(p.q)?.trim() || undefined,
     competitor: competitor === "yes" || competitor === "no" ? competitor : "all",
@@ -79,6 +80,7 @@ export default async function AdminScrapersPage({ searchParams }: PageProps) {
   const productionTotal = sources.filter((s) => s.configStatus === "production").length;
   const draftTotal = sources.filter((s) => s.configStatus === "draft" || s.configStatus === "tested").length;
   const emptyTotal = sources.filter((s) => s.configStatus === "empty").length;
+  const descartadoTotal = sources.filter((s) => s.configStatus === "descartado").length;
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -105,15 +107,15 @@ export default async function AdminScrapersPage({ searchParams }: PageProps) {
         </header>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
-          <Stat label="Total" value={sources.length} />
-          <Stat label="Activas" value={activeTotal} />
           <Stat label="En producción" value={productionTotal} highlight="emerald" />
           <Stat label="Draft / probadas" value={draftTotal} highlight="amber" />
           <Stat
-            label="Sin configurar"
+            label="Sin investigar"
             value={emptyTotal}
             highlight={emptyTotal > 0 ? "red" : undefined}
           />
+          <Stat label="Descartadas" value={descartadoTotal} />
+          <Stat label="Total" value={sources.length} />
         </div>
 
         <AdminSourceFilters basePath="/admin/scrapers" />
