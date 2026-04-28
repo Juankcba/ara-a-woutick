@@ -1,0 +1,83 @@
+name: Scrape Fever (daily)
+
+# Triggers:
+#  - Schedule: diario 04:30 UTC (= 06:30 Madrid CEST / 05:30 CET).
+#    Después de Taquilla en cPanel y antes del horario laboral.
+#  - workflow_dispatch: botón manual desde la UI de GitHub.
+#
+# Por qué GH Actions y no cPanel: Fever migró a un motor genérico con strategy
+# `playwright`, que necesita chromium + libs de sistema. cPanel shared hosting
+# no permite instalar las deps con sudo. Mismo patrón que ECI.
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-fever-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    name: Scrape + promote Fever
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: scrapers
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Get pnpm store dir
+        id: pnpm-cache
+        shell: bash
+        run: echo "store=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('scrapers/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Scrape Fever
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          DB_PUBLIC: ${{ secrets.DB_PUBLIC }}
+          DB_SCRAPING: ${{ secrets.DB_SCRAPING }}
+          DB_LEADS: ${{ secrets.DB_LEADS }}
+        run: pnpm scrape fever
+
+      - name: Promote Fever
+        if: success()
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          DB_PUBLIC: ${{ secrets.DB_PUBLIC }}
+          DB_SCRAPING: ${{ secrets.DB_SCRAPING }}
+          DB_LEADS: ${{ secrets.DB_LEADS }}
+        run: pnpm promote fever 5000

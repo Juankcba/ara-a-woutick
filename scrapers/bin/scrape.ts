@@ -5,6 +5,8 @@ import { runGeneric } from '../src/sources/generic_ticketera.ts';
 import type { RowDataPacket } from 'mysql2';
 
 // Sources con scraper dedicado (cada uno tiene su archivo en src/sources/<slug>.ts).
+// Si una source DEDICATED tiene también config.strategy en DB, gana el config:
+// permite migrar sources del scraper dedicado al motor genérico sin borrar código.
 const DEDICATED = ['ticketmaster', 'taquilla', 'apm_musical', 'fever', 'elcorteingles'] as const;
 type DedicatedSlug = (typeof DEDICATED)[number];
 
@@ -12,43 +14,40 @@ function isDedicated(slug: string): slug is DedicatedSlug {
   return (DEDICATED as readonly string[]).includes(slug);
 }
 
-async function isCompetitorWithConfig(slug: string): Promise<boolean> {
+async function hasGenericConfig(slug: string): Promise<boolean> {
   const [rows] = await scrapingPool.query<RowDataPacket[]>(
-    'SELECT is_competitor, config FROM sources WHERE slug = ?',
+    'SELECT config FROM sources WHERE slug = ?',
     [slug],
   );
-  const row = rows[0];
-  if (!row) return false;
-  const cfg = row.config;
-  return Boolean(row.is_competitor) && !!cfg && typeof cfg === 'object' && 'strategy' in cfg;
+  const cfg = rows[0]?.config;
+  return !!cfg && typeof cfg === 'object' && 'strategy' in cfg;
 }
 
 async function main(): Promise<void> {
   const slug = process.argv[2];
   if (!slug) {
-    console.error(`Usage: pnpm scrape <source>\nDedicated: ${DEDICATED.join(', ')}\nCompetitor: cualquier slug en sources con config.strategy seteado`);
+    console.error(`Usage: pnpm scrape <source>\nDedicated: ${DEDICATED.join(', ')}\nGeneric: cualquier slug con config.strategy en DB`);
     process.exit(1);
   }
 
-  if (!isDedicated(slug)) {
-    const ok = await isCompetitorWithConfig(slug);
-    if (!ok) {
-      console.error(
-        `Source '${slug}' no es dedicado y no tiene config.strategy en DB.\n` +
-          `Dedicated: ${DEDICATED.join(', ')}`,
-      );
-      process.exit(1);
-    }
+  const useGeneric = await hasGenericConfig(slug);
+  if (!isDedicated(slug) && !useGeneric) {
+    console.error(
+      `Source '${slug}' no es dedicado y no tiene config.strategy en DB.\n` +
+        `Dedicated: ${DEDICATED.join(', ')}`,
+    );
+    process.exit(1);
   }
 
   const sourceId = await resolveSourceId(slug);
   const runId = await startRun(sourceId, 'manual');
-  console.log(`[${slug}] run #${runId} starting (source_id=${sourceId})`);
+  const route = useGeneric ? 'generic' : 'dedicated';
+  console.log(`[${slug}] run #${runId} starting (source_id=${sourceId}, route=${route})`);
 
   try {
-    const stats = isDedicated(slug)
-      ? await (await import(`../src/sources/${slug}.ts`)).run(runId)
-      : await runGeneric(runId, slug);
+    const stats = useGeneric
+      ? await runGeneric(runId, slug)
+      : await (await import(`../src/sources/${slug}.ts`)).run(runId);
     await endRun(runId, stats.items_error > 0 ? 'partial' : 'ok', stats);
     console.log(`[${slug}] run #${runId} done`, stats);
   } catch (e) {

@@ -580,18 +580,16 @@ async function runSelectorsStrategy(ctx: RunContext, s: SelectorsStrategy): Prom
   const cardArr = cards.toArray();
   for (let idx = 0; idx < cardArr.length; idx++) {
     const $el = $(cardArr[idx]);
-    const pick = (sel?: string): string | null => {
-      if (!sel) return null;
-      const t = $el.find(sel).first();
-      const txt = t.text().trim();
-      return txt || t.attr('content')?.trim() || null;
-    };
+    const pick = makePick($el);
     // URL resolution con varios fallbacks:
-    //   1) selector explícito en fields.url
+    //   1) selector explícito en fields.url (puede ser "selector@attr")
     //   2) card mismo si es <a>
     //   3) primer <a> dentro del card
     let href: string | undefined;
-    if (s.fields.url) href = $el.find(s.fields.url).first().attr('href') ?? undefined;
+    if (s.fields.url) {
+      const { sel, attr } = parseSelectorSpec(s.fields.url);
+      href = $el.find(sel).first().attr(attr ?? 'href') ?? undefined;
+    }
     if (!href && $el.is('a')) href = $el.attr('href') ?? undefined;
     if (!href) href = $el.find('a').first().attr('href') ?? undefined;
     const eventUrl = href ? resolveUrl(href, ctx.baseUrl) : `${url}#card-${idx}`;
@@ -602,9 +600,7 @@ async function runSelectorsStrategy(ctx: RunContext, s: SelectorsStrategy): Prom
       url: eventUrl,
       name: pick(s.fields.title),
       startDate: pick(s.fields.datetime),
-      image: s.fields.image
-        ? $el.find(s.fields.image).first().attr('src') ?? null
-        : ($el.find('img').first().attr('src') ?? null),
+      image: pickImg($el, s.fields.image),
       venue: {
         ...emptyVenue(),
         name: pick(s.fields.venue),
@@ -793,13 +789,12 @@ function parseSelectorsFromHtml(
 
   for (let idx = 0; idx < cards.length; idx++) {
     const $el = $(cards[idx]);
-    const pick = (sel?: string): string | null => {
-      if (!sel) return null;
-      const t = $el.find(sel).first();
-      return t.text().trim() || t.attr('content')?.trim() || null;
-    };
+    const pick = makePick($el);
     let href: string | undefined;
-    if (spec.url) href = $el.find(spec.url).first().attr('href') ?? undefined;
+    if (spec.url) {
+      const parsed = parseSelectorSpec(spec.url);
+      href = $el.find(parsed.sel).first().attr(parsed.attr ?? 'href') ?? undefined;
+    }
     if (!href && $el.is('a')) href = $el.attr('href') ?? undefined;
     if (!href) href = $el.find('a').first().attr('href') ?? undefined;
     const eventUrl = href ? resolveUrl(href, ctx.baseUrl) : `${pageUrl}#card-${idx}`;
@@ -810,9 +805,7 @@ function parseSelectorsFromHtml(
       url: eventUrl,
       name: pick(spec.title),
       startDate: pick(spec.datetime),
-      image: spec.image
-        ? $el.find(spec.image).first().attr('src') ?? null
-        : ($el.find('img').first().attr('src') ?? null),
+      image: pickImg($el, spec.image),
       venue: { ...emptyVenue(), name: pick(spec.venue) },
       offers: {
         lowPrice: parsePriceFromText(pick(spec.price)),
@@ -824,6 +817,41 @@ function parseSelectorsFromHtml(
     });
   }
   return out;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Field extraction helpers — sintaxis "selector@attr"
+//
+// Default (sin @attr): toma .text() del primer match, fallback a attr('content').
+// Con "@attr": toma ese atributo (típico: img@alt, img@src, time@datetime).
+// ────────────────────────────────────────────────────────────────────
+
+function parseSelectorSpec(spec: string): { sel: string; attr: string | null } {
+  // Solo aceptamos un único '@' como separador, y debe venir después del selector.
+  // Esto permite selectores con [attr=value] siempre que no usen '@'.
+  const idx = spec.lastIndexOf('@');
+  if (idx <= 0) return { sel: spec, attr: null };
+  return { sel: spec.slice(0, idx), attr: spec.slice(idx + 1) };
+}
+
+type CheerioElement = ReturnType<cheerio.CheerioAPI>;
+
+function makePick($el: CheerioElement): (spec?: string) => string | null {
+  return (spec) => {
+    if (!spec) return null;
+    const { sel, attr } = parseSelectorSpec(spec);
+    const t = $el.find(sel).first();
+    if (attr) return t.attr(attr)?.trim() || null;
+    const txt = t.text().trim();
+    return txt || t.attr('content')?.trim() || null;
+  };
+}
+
+function pickImg($el: CheerioElement, spec?: string): string | null {
+  if (!spec) return $el.find('img').first().attr('src') ?? null;
+  const { sel, attr } = parseSelectorSpec(spec);
+  const t = $el.find(sel).first();
+  return t.attr(attr ?? 'src')?.trim() || null;
 }
 
 // ────────────────────────────────────────────────────────────────────
