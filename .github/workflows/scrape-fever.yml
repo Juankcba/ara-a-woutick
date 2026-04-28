@@ -22,7 +22,7 @@ jobs:
     name: Scrape + promote Fever
     runs-on: ubuntu-latest
     environment: Production
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: scrapers

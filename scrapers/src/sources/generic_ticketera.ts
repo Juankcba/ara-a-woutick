@@ -62,7 +62,10 @@ interface SelectorsStrategy {
 
 interface PlaywrightStrategy {
   type: 'playwright';
-  listing_url: string;
+  // String para 1 listing, array para varios (cada URL se procesa con la misma
+  // config y un browser context fresco). Útil para sitios particionados por
+  // ciudad / categoría / página.
+  listing_url: string | string[];
   // Qué extraer DESPUÉS de que la página renderice. 'jsonld' = parsea JSON-LD
   // del HTML final (cubre la mayoría — Cloudflare-passed sites con SSR-tras-JS).
   // 'next_data' = parsea __NEXT_DATA__ JSON (Next.js SPAs). 'selectors' = aplica
@@ -635,7 +638,8 @@ async function runPlaywrightStrategy(ctx: RunContext, s: PlaywrightStrategy): Pr
   const stealth = (await import('puppeteer-extra-plugin-stealth')).default;
   chromium.use(stealth());
 
-  const url = resolveUrl(s.listing_url, ctx.baseUrl);
+  const listingUrls = Array.isArray(s.listing_url) ? s.listing_url : [s.listing_url];
+
   const browser = await chromium.launch({
     headless: true,
     args: ['--disable-blink-features=AutomationControlled'],
@@ -648,46 +652,64 @@ async function runPlaywrightStrategy(ctx: RunContext, s: PlaywrightStrategy): Pr
       viewport: { width: 1440, height: 900 },
     });
     const page = await browserCtx.newPage();
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-    if (s.wait_for_selector) {
-      try {
-        await page.waitForSelector(s.wait_for_selector, { timeout: 15_000 });
-      } catch {
-        await reportError(ctx, `wait_for_selector timeout: ${s.wait_for_selector}`, {
-          url,
-          errorCode: 'pw_wait_timeout',
-        });
-      }
-    }
-    await page.waitForTimeout(s.wait_ms ?? 3000);
-
-    if (s.scroll !== false) {
-      const steps = s.scroll_steps ?? 8;
-      for (let i = 0; i < steps; i++) {
-        await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-        await page.waitForTimeout(400);
-      }
-    }
-
-    const html = await page.content();
-    await reportError(ctx, `playwright loaded ${html.length} chars from ${url}`, {
-      errorCode: 'info',
-      url,
-    });
-
-    let events: GenericRawEvent[] = [];
-    if (s.extract === 'jsonld') {
-      events = parseJsonLdEvents(html, url, ctx);
-    } else if (s.extract === 'next_data') {
-      events = parseNextDataEvents(html, url, ctx);
-    } else {
-      events = parseSelectorsFromHtml(html, url, ctx, s.extract.selectors);
-    }
-
-    for (const ev of events) {
+    for (const rawUrl of listingUrls) {
       if (maxItemsReached(ctx)) break;
-      await emitEvent(ctx, ev);
+      const url = resolveUrl(rawUrl, ctx.baseUrl);
+
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      } catch (err) {
+        ctx.stats.items_error++;
+        await reportError(ctx, err instanceof Error ? err.message : String(err), {
+          url,
+          errorCode: 'pw_goto_failed',
+        });
+        continue;
+      }
+
+      if (s.wait_for_selector) {
+        try {
+          await page.waitForSelector(s.wait_for_selector, { timeout: 15_000 });
+        } catch {
+          await reportError(ctx, `wait_for_selector timeout: ${s.wait_for_selector}`, {
+            url,
+            errorCode: 'pw_wait_timeout',
+          });
+        }
+      }
+      await page.waitForTimeout(s.wait_ms ?? 3000);
+
+      if (s.scroll !== false) {
+        const steps = s.scroll_steps ?? 8;
+        for (let i = 0; i < steps; i++) {
+          await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+          await page.waitForTimeout(400);
+        }
+      }
+
+      const html = await page.content();
+
+      let events: GenericRawEvent[] = [];
+      if (s.extract === 'jsonld') {
+        events = parseJsonLdEvents(html, url, ctx);
+      } else if (s.extract === 'next_data') {
+        events = parseNextDataEvents(html, url, ctx);
+      } else {
+        events = parseSelectorsFromHtml(html, url, ctx, s.extract.selectors);
+      }
+
+      await reportError(ctx, `playwright ${url}: ${events.length} events`, {
+        errorCode: 'info',
+        url,
+      });
+
+      for (const ev of events) {
+        if (maxItemsReached(ctx)) break;
+        await emitEvent(ctx, ev);
+      }
+
+      if (listingUrls.length > 1) await sleep(ctx.delayMs);
     }
   } finally {
     await browser.close();
