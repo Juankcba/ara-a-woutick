@@ -81,6 +81,11 @@ interface PlaywrightStrategy {
   wait_for_selector?: string;        // si se setea, espera por ese selector antes
   scroll?: boolean;                  // default true — scroll para lazy-load
   scroll_steps?: number;             // default 8
+  // Si se setea, busca un iframe cuyo URL matchee este regex y aplica
+  // `extract` sobre el HTML del iframe en vez del de la page principal.
+  // Útil para sitios legacy janto que renderizan eventos dentro de
+  // modulos.php?nivel=menuEventos.
+  iframe_url_pattern?: string;
 }
 
 type Strategy = SitemapStrategy | JsonLdStrategy | SelectorsStrategy | PlaywrightStrategy;
@@ -764,18 +769,37 @@ async function runPlaywrightStrategy(ctx: RunContext, s: PlaywrightStrategy): Pr
         }
       }
 
-      const html = await page.content();
+      // Si pidieron extraer del contenido de un iframe, lo buscamos por URL.
+      // Útil para sitios legacy janto que renderizan eventos dentro de
+      // /modulos.php?nivel=menuEventos.
+      let html: string;
+      let extractedFrom = url;
+      if (s.iframe_url_pattern) {
+        const re = new RegExp(s.iframe_url_pattern);
+        const frame = page.frames().find((f) => re.test(f.url()));
+        if (!frame) {
+          await reportError(ctx, `iframe matching /${s.iframe_url_pattern}/ no encontrado`, {
+            url,
+            errorCode: 'iframe_not_found',
+          });
+          continue;
+        }
+        html = await frame.content();
+        extractedFrom = frame.url();
+      } else {
+        html = await page.content();
+      }
 
       let events: GenericRawEvent[] = [];
       if (s.extract === 'jsonld') {
-        events = parseJsonLdEvents(html, url, ctx);
+        events = parseJsonLdEvents(html, extractedFrom, ctx);
       } else if (s.extract === 'next_data') {
-        events = parseNextDataEvents(html, url, ctx);
+        events = parseNextDataEvents(html, extractedFrom, ctx);
       } else {
-        events = parseSelectorsFromHtml(html, url, ctx, s.extract.selectors);
+        events = parseSelectorsFromHtml(html, extractedFrom, ctx, s.extract.selectors);
       }
 
-      await reportError(ctx, `playwright ${url}: ${events.length} events`, {
+      await reportError(ctx, `playwright ${url}${s.iframe_url_pattern ? ' (iframe)' : ''}: ${events.length} events`, {
         errorCode: 'info',
         url,
       });
