@@ -1,6 +1,7 @@
 // Scrapea las páginas de contacto/prensa/equipo de las empresas de leads_crm
-// que ya tienen website. Extrae emails + teléfonos plaintext y mailto links.
-// Los persiste como filas en leads_crm.contacts.
+// que ya tienen website. Extrae emails + teléfonos + URLs de redes sociales
+// (IG, FB, Twitter/X, LinkedIn). Persiste en leads_crm.contacts y
+// leads_crm.companies (cuando los campos están NULL).
 //
 // Flags:
 //   --limit N       cuántas empresas procesar (default 30)
@@ -131,6 +132,55 @@ function cleanEmails(raw: string[]): string[] {
   return [...out];
 }
 
+// Detección de URLs de redes sociales en el HTML.
+// Para cada red, captura el primer "perfil" — descarta links de share,
+// intent/tweet, plugins, hashtags, y links a la propia red genérica.
+type SocialField = 'instagram' | 'facebook' | 'twitter' | 'linkedin';
+interface Socials {
+  instagram: string | null;
+  facebook: string | null;
+  twitter: string | null;
+  linkedin: string | null;
+}
+
+const SOCIAL_PATTERNS: Record<SocialField, RegExp> = {
+  // instagram.com/<handle> donde handle no es 'share', 'p', 'reel', etc
+  instagram: /https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,30})\/?(?:[?#].*)?(?=["'\s])/g,
+  // facebook.com/<page> excluyendo sharer, plugins, dialog
+  facebook: /https?:\/\/(?:www\.|m\.)?facebook\.com\/([a-zA-Z0-9.-]{2,50})\/?(?:[?#].*)?(?=["'\s])/g,
+  // twitter.com / x.com — handle alfanumérico
+  twitter: /https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]{1,15})\/?(?:[?#].*)?(?=["'\s])/g,
+  // linkedin.com/company/<slug> o /in/<person>
+  linkedin: /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|in|school)\/[a-zA-Z0-9_-]{2,80}\/?(?:[?#].*)?(?=["'\s])/g,
+};
+
+// Subpaths que NO son perfiles reales — se filtran por handle/path.
+const SOCIAL_HANDLE_BLACKLIST: Record<SocialField, RegExp> = {
+  instagram: /^(p|reel|reels|stories|share|explore|tv|accounts|developer|about|legal|directory)$/i,
+  facebook:  /^(sharer|share|dialog|plugins|tr|events|pages|groups|gaming|watch|marketplace|business|policies|help|policy|terms)$/i,
+  twitter:   /^(intent|share|home|search|hashtag|i|settings|login|signup|notifications|messages|explore|compose)$/i,
+  linkedin:  /^$/, // linkedin pattern ya exige /company/, /in/ o /school/, no necesita blacklist
+};
+
+function extractSocials(html: string, _baseHost: string): Socials {
+  const out: Socials = { instagram: null, facebook: null, twitter: null, linkedin: null };
+  for (const field of Object.keys(SOCIAL_PATTERNS) as SocialField[]) {
+    const re = SOCIAL_PATTERNS[field];
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(html)) !== null) {
+      const url = match[0];
+      const handle = match[1] ?? '';
+      if (handle && SOCIAL_HANDLE_BLACKLIST[field].test(handle)) continue;
+      // limpiar trailing punctuation y quotes
+      const clean = url.replace(/['"]+$/, '').replace(/[).,;]+$/, '');
+      out[field] = clean;
+      break;
+    }
+  }
+  return out;
+}
+
 function cleanPhones(raw: string[]): string[] {
   const out = new Set<string>();
   for (const p of raw) {
@@ -162,19 +212,21 @@ async function fetchHtml(url: string): Promise<string | null> {
 interface ContactData {
   emails: string[];
   phones: string[];
+  socials: Socials;
   pagesVisited: string[];
 }
 
 async function scrapeContacts(website: string): Promise<ContactData> {
   const emailsSet = new Set<string>();
   const phonesSet = new Set<string>();
+  const socials: Socials = { instagram: null, facebook: null, twitter: null, linkedin: null };
   const visited: string[] = [];
 
   let base: URL;
   try {
     base = new URL(website.startsWith('http') ? website : `https://${website}`);
   } catch {
-    return { emails: [], phones: [], pagesVisited: [] };
+    return { emails: [], phones: [], socials, pagesVisited: [] };
   }
 
   for (const path of CONTACT_PATHS) {
@@ -195,14 +247,23 @@ async function scrapeContacts(website: string): Promise<ContactData> {
     const phoneHits = html.match(PHONE_RE) ?? [];
     for (const p of cleanPhones(phoneHits)) phonesSet.add(p);
 
-    // Si ya tenemos al menos 1 email legit, cortamos.
-    if (emailsSet.size > 0) break;
+    // socials — solo seteamos las que todavía no encontramos
+    const found = extractSocials(html, base.host);
+    for (const k of ['instagram', 'facebook', 'twitter', 'linkedin'] as const) {
+      if (!socials[k] && found[k]) socials[k] = found[k];
+    }
+
+    // Cortamos cuando ya tenemos email + las 4 socials. Si solo email,
+    // damos una página más por si el contacto está separado del footer.
+    const allSocialsFound = Object.values(socials).every((v) => v !== null);
+    if (emailsSet.size > 0 && allSocialsFound) break;
     await sleep(500);
   }
 
   return {
     emails: [...emailsSet].slice(0, 5),
     phones: [...phonesSet].slice(0, 3),
+    socials,
     pagesVisited: visited,
   };
 }
@@ -210,7 +271,17 @@ async function scrapeContacts(website: string): Promise<ContactData> {
 async function fetchTargets(args: CliArgs): Promise<CompanyRow[]> {
   const where = ['c.website IS NOT NULL'];
   const params: unknown[] = [];
-  if (!args.force) where.push('NOT EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id)');
+  // Sin --force, procesar empresas a las que les falte AL MENOS UNA cosa:
+  // contactos, instagram, facebook, twitter o linkedin.
+  if (!args.force) {
+    where.push(
+      `(NOT EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id)
+        OR c.instagram_url IS NULL
+        OR c.facebook_url IS NULL
+        OR c.twitter_url IS NULL
+        OR c.linkedin_url IS NULL)`,
+    );
+  }
   if (args.category) {
     where.push('c.category = ?');
     params.push(args.category);
@@ -262,6 +333,34 @@ async function saveContacts(companyId: number, data: ContactData): Promise<numbe
       [ranked[0], companyId],
     );
   }
+
+  // Socials — solo llenamos los que están NULL. UPDATE con COALESCE no toca
+  // los valores existentes, así que un re-run no pisa lo verificado a mano.
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  if (data.socials.instagram) {
+    updates.push('instagram_url = COALESCE(instagram_url, ?)');
+    params.push(data.socials.instagram);
+  }
+  if (data.socials.facebook) {
+    updates.push('facebook_url = COALESCE(facebook_url, ?)');
+    params.push(data.socials.facebook);
+  }
+  if (data.socials.twitter) {
+    updates.push('twitter_url = COALESCE(twitter_url, ?)');
+    params.push(data.socials.twitter);
+  }
+  if (data.socials.linkedin) {
+    updates.push('linkedin_url = COALESCE(linkedin_url, ?)');
+    params.push(data.socials.linkedin);
+  }
+  if (updates.length > 0) {
+    params.push(companyId);
+    await leadsPool.query(
+      `UPDATE companies SET ${updates.join(', ')} WHERE id = ?`,
+      params,
+    );
+  }
   return inserted;
 }
 
@@ -289,28 +388,36 @@ function emailRank(email: string): number {
   let matched = 0;
   let totalEmails = 0;
 
+  let totalSocials = 0;
+
   for (const c of targets) {
     console.log(`→ [${c.id}] ${c.name} · ${c.website}`);
     const data = await scrapeContacts(c.website);
     const emailsTxt = data.emails.length ? data.emails.join(', ') : '(none)';
     const phonesTxt = data.phones.length ? data.phones.join(', ') : '(none)';
-    console.log(`   emails: ${emailsTxt}`);
-    console.log(`   phones: ${phonesTxt}`);
+    const socialsList = (Object.entries(data.socials).filter(([, v]) => v) as [string, string][])
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ') || '(none)';
+    console.log(`   emails:  ${emailsTxt}`);
+    console.log(`   phones:  ${phonesTxt}`);
+    console.log(`   socials: ${socialsList}`);
     console.log(`   visited: ${data.pagesVisited.length} pages`);
 
     if (data.emails.length > 0) matched++;
     totalEmails += data.emails.length;
+    totalSocials += Object.values(data.socials).filter((v) => v).length;
 
-    if (!args.dryRun && data.emails.length > 0) {
+    const hasAnything = data.emails.length > 0 || Object.values(data.socials).some((v) => v);
+    if (!args.dryRun && hasAnything) {
       const inserted = await saveContacts(c.id, data);
-      console.log(`   ✓ saved ${inserted} new contacts`);
+      console.log(`   ✓ saved ${inserted} new contacts + socials`);
     }
 
     await sleep(REQ_DELAY_MS);
   }
 
   console.log(
-    `\n[scrape-contacts] done · companies=${targets.length} · with_email=${matched} · emails_found=${totalEmails}`,
+    `\n[scrape-contacts] done · companies=${targets.length} · with_email=${matched} · emails_found=${totalEmails} · socials_found=${totalSocials}`,
   );
 })()
   .catch((e) => {
