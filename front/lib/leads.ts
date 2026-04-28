@@ -248,7 +248,17 @@ export type VerifiableField =
   | 'facebook'
   | 'twitter';
 
-const VERIFIABLE_COLUMN: Record<VerifiableField, string> = {
+const VALUE_COLUMN: Record<VerifiableField, string> = {
+  website: 'website',
+  email: 'email',
+  phone: 'phone',
+  linkedin: 'linkedin_url',
+  instagram: 'instagram_url',
+  facebook: 'facebook_url',
+  twitter: 'twitter_url',
+};
+
+const VERIFIED_COLUMN: Record<VerifiableField, string> = {
   website: 'website_verified',
   email: 'email_verified',
   phone: 'phone_verified',
@@ -258,21 +268,57 @@ const VERIFIABLE_COLUMN: Record<VerifiableField, string> = {
   twitter: 'twitter_verified',
 };
 
-export async function setCompanyVerified(
+export interface UpdateFieldPatch {
+  value?: string | null;
+  verified?: boolean;
+}
+
+// Actualiza valor y/o flag verified de UN canal de una company.
+// El front llama esto desde el modal de validación; ambos parámetros son
+// opcionales — si solo se pasa value, no toca el flag y viceversa.
+export async function updateCompanyField(
   companyId: number,
   field: VerifiableField,
-  verified: boolean,
+  patch: UpdateFieldPatch,
 ): Promise<{ updated: boolean }> {
-  const col = VERIFIABLE_COLUMN[field];
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (patch.value !== undefined) {
+    const v = patch.value && patch.value.trim() ? patch.value.trim() : null;
+    sets.push(`${VALUE_COLUMN[field]} = ?`);
+    params.push(v);
+  }
+  if (patch.verified !== undefined) {
+    sets.push(`${VERIFIED_COLUMN[field]} = ?`);
+    params.push(patch.verified ? 1 : 0);
+  }
+  if (sets.length === 0) return { updated: false };
+
+  // verified_at se setea al momento si cualquier flag queda en TRUE,
+  // y se limpia si todos los flags vuelven a FALSE tras el update.
+  sets.push(
+    `verified_at = IF(
+       (CASE WHEN ? IS NULL THEN website_verified   ELSE ? END) OR
+       (CASE WHEN ? IS NULL THEN email_verified     ELSE ? END) OR
+       (CASE WHEN ? IS NULL THEN phone_verified     ELSE ? END) OR
+       (CASE WHEN ? IS NULL THEN linkedin_verified  ELSE ? END) OR
+       (CASE WHEN ? IS NULL THEN instagram_verified ELSE ? END) OR
+       (CASE WHEN ? IS NULL THEN facebook_verified  ELSE ? END) OR
+       (CASE WHEN ? IS NULL THEN twitter_verified   ELSE ? END),
+       UTC_TIMESTAMP(), NULL
+     )`,
+  );
+  // Para cada flag: pasamos el valor nuevo si cambió este, NULL si no.
+  for (const f of ['website', 'email', 'phone', 'linkedin', 'instagram', 'facebook', 'twitter'] as const) {
+    const flag = patch.verified !== undefined && f === field ? (patch.verified ? 1 : 0) : null;
+    params.push(flag, flag);
+  }
+
+  params.push(companyId);
   const [res] = await getPool().query<mysql.ResultSetHeader>(
-    `UPDATE companies
-        SET ${col} = ?,
-            verified_at = IF(? = TRUE OR
-                             website_verified OR email_verified OR phone_verified OR
-                             linkedin_verified OR instagram_verified OR facebook_verified OR
-                             twitter_verified, UTC_TIMESTAMP(), NULL)
-      WHERE id = ?`,
-    [verified ? 1 : 0, verified ? 1 : 0, companyId],
+    `UPDATE companies SET ${sets.join(', ')} WHERE id = ?`,
+    params,
   );
   return { updated: res.affectedRows > 0 };
 }
