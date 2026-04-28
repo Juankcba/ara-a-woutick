@@ -34,6 +34,12 @@ interface SitemapStrategy {
   event_url_pattern?: string;        // regex literal sin slashes (e.g. "/evento/|/entradas/")
   fetch_each?: boolean;              // also fetch each event URL for details
   max_urls?: number;                 // safety cap (default: 200)
+  // 'http' (default) usa fetch() — rápido. 'playwright' lanza chromium con
+  // stealth para pasar Cloudflare / WAF. Costo: ~5s × max_urls.
+  fetch_via?: 'http' | 'playwright';
+  // Solo aplica con fetch_via=playwright. Tiempo extra a esperar después del
+  // domcontentloaded para que el JS hidrate (default 1500ms).
+  wait_ms_per_page?: number;
 }
 
 interface JsonLdStrategy {
@@ -294,60 +300,130 @@ async function emitEvent(ctx: RunContext, event: GenericRawEvent): Promise<void>
 // ────────────────────────────────────────────────────────────────────
 
 async function runSitemapStrategy(ctx: RunContext, s: SitemapStrategy): Promise<void> {
+  const usePlaywright = s.fetch_via === 'playwright';
   const sitemapUrl = resolveUrl(s.url, ctx.baseUrl);
-  const xml = await fetchText(sitemapUrl, ctx.userAgent);
-  const urls = extractSitemapUrls(xml, ctx.baseUrl);
 
-  const filtered = s.event_url_pattern
-    ? (() => {
-        const re = new RegExp(s.event_url_pattern!, 'i');
-        return urls.filter((u) => re.test(u));
-      })()
-    : urls;
+  // Pool de fetch unificado — abre browser una sola vez si aplica.
+  const fetcher = usePlaywright
+    ? await openPlaywrightFetcher(ctx, s.wait_ms_per_page ?? 1500)
+    : { fetch: (u: string) => fetchText(u, ctx.userAgent), close: async () => {} };
 
-  const limit = Math.min(filtered.length, s.max_urls ?? SAFETY_MAX_URLS);
-  const slice = filtered.slice(0, limit);
+  try {
+    const xml = await fetcher.fetch(sitemapUrl);
+    const urls = extractSitemapUrls(xml, ctx.baseUrl);
 
-  await reportError(ctx,`sitemap: ${urls.length} urls, ${filtered.length} match, processing ${limit}`, {
-    errorCode: 'info',
-    url: sitemapUrl,
-  });
+    const filtered = s.event_url_pattern
+      ? (() => {
+          const re = new RegExp(s.event_url_pattern!, 'i');
+          return urls.filter((u) => re.test(u));
+        })()
+      : urls;
 
-  if (!s.fetch_each) {
-    // Modo "solo URLs": cada URL es un evento mínimo (sin detalles)
+    const limit = Math.min(filtered.length, s.max_urls ?? SAFETY_MAX_URLS);
+    const slice = filtered.slice(0, limit);
+
+    await reportError(ctx, `sitemap (${usePlaywright ? 'pw' : 'http'}): ${urls.length} urls, ${filtered.length} match, processing ${limit}`, {
+      errorCode: 'info',
+      url: sitemapUrl,
+    });
+
+    if (!s.fetch_each) {
+      // Modo "solo URLs": cada URL es un evento mínimo (sin detalles)
+      for (const u of slice) {
+        await emitEvent(ctx, {
+          ...emptyEvent(ctx, u),
+          url: u,
+          name: null,
+        });
+      }
+      return;
+    }
+
+    // Modo "fetch each": para cada URL, descargar página y parsear JSON-LD
     for (const u of slice) {
-      await emitEvent(ctx, {
-        ...emptyEvent(ctx, u),
-        url: u,
-        name: null,
-      });
+      if (maxItemsReached(ctx)) break;
+      try {
+        const html = await fetcher.fetch(u);
+        const events = parseJsonLdEvents(html, u, ctx);
+        if (events.length === 0) {
+          // Si no hay JSON-LD, al menos guardamos URL+title del HTML
+          events.push(parseHtmlMinimum(html, u, ctx));
+        }
+        for (const ev of events) {
+          if (maxItemsReached(ctx)) break;
+          await emitEvent(ctx, ev);
+        }
+      } catch (err) {
+        ctx.stats.items_error++;
+        await reportError(ctx, err instanceof Error ? err.message : String(err), {
+          url: u,
+          errorCode: 'fetch_failed',
+        });
+      }
+      await sleep(ctx.delayMs);
     }
-    return;
+  } finally {
+    await fetcher.close();
+  }
+}
+
+interface Fetcher {
+  fetch: (url: string) => Promise<string>;
+  close: () => Promise<void>;
+}
+
+// Devuelve un fetcher que reusa una sola página de chromium para todas las
+// requests. Más lento que fetch() pero pasa Cloudflare y puede esperar JS.
+//
+// Para XML/JSON (page.goto los descarga en vez de navegar), evaluamos un
+// fetch() desde el contexto del navegador — reusa las cookies de CF que
+// quedaron seteadas tras el warmup a la home.
+async function openPlaywrightFetcher(ctx: RunContext, waitPerPageMs = 1500): Promise<Fetcher> {
+  const { chromium } = await import('playwright-extra');
+  const stealth = (await import('puppeteer-extra-plugin-stealth')).default;
+  chromium.use(stealth());
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled'],
+  });
+  const browserCtx = await browser.newContext({
+    userAgent: ctx.userAgent,
+    locale: 'es-ES',
+    timezoneId: 'Europe/Madrid',
+    viewport: { width: 1440, height: 900 },
+  });
+  const page = await browserCtx.newPage();
+
+  // Warmup: visitar la home a sembrar cookies de CF antes de cualquier request.
+  if (ctx.baseUrl) {
+    try {
+      await page.goto(ctx.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      await page.waitForTimeout(2000);
+    } catch {
+      // El warmup puede fallar sin que importe — seguimos y vemos qué pasa.
+    }
   }
 
-  // Modo "fetch each": para cada URL, descargar página y parsear JSON-LD
-  for (const u of slice) {
-    if (maxItemsReached(ctx)) break;
-    try {
-      const html = await fetchText(u, ctx.userAgent);
-      const events = parseJsonLdEvents(html, u, ctx);
-      if (events.length === 0) {
-        // Si no hay JSON-LD, al menos guardamos URL+title del HTML
-        events.push(parseHtmlMinimum(html, u, ctx));
+  return {
+    async fetch(url: string): Promise<string> {
+      // XML / JSON: page.goto los baja en lugar de navegar.
+      // page.evaluate(fetch) usa las cookies actuales y devuelve el body como texto.
+      if (/\.(xml|json)(\?|$)/i.test(url)) {
+        return await page.evaluate(async (u) => {
+          const r = await fetch(u, { credentials: 'include' });
+          if (!r.ok) throw new Error(`HTTP ${r.status} ${u}`);
+          return await r.text();
+        }, url);
       }
-      for (const ev of events) {
-        if (maxItemsReached(ctx)) break;
-        await emitEvent(ctx, ev);
-      }
-    } catch (err) {
-      ctx.stats.items_error++;
-      await reportError(ctx,err instanceof Error ? err.message : String(err), {
-        url: u,
-        errorCode: 'fetch_failed',
-      });
-    }
-    await sleep(ctx.delayMs);
-  }
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      await page.waitForTimeout(waitPerPageMs);
+      return page.content();
+    },
+    async close(): Promise<void> {
+      await browser.close();
+    },
+  };
 }
 
 function extractSitemapUrls(xml: string, baseUrl: string): string[] {
