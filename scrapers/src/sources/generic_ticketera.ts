@@ -50,6 +50,10 @@ interface JsonLdStrategy {
     start?: number;                  // default 1
     max_pages?: number;              // default 5
   };
+  // Tipos JSON-LD a tratar como evento. Default ['Event']. Sitios como
+  // atrapalo usan 'Product' dentro de ItemList porque venden entradas
+  // como productos del marketplace.
+  event_types?: string[];
 }
 
 interface SelectorsStrategy {
@@ -77,6 +81,9 @@ interface PlaywrightStrategy {
   // 'next_data' = parsea __NEXT_DATA__ JSON (Next.js SPAs). 'selectors' = aplica
   // CSS selectors sobre el HTML hidratado (igual que strategy=selectors).
   extract: 'jsonld' | 'next_data' | { selectors: SelectorsStrategy['fields'] & { event_card: string } };
+  // Tipos JSON-LD a tratar como evento (solo aplica con extract='jsonld').
+  // Default ['Event']. Atrapalo usa ['Product'].
+  event_types?: string[];
   wait_ms?: number;                  // default 3000 — tras goto, antes de extraer
   wait_for_selector?: string;        // si se setea, espera por ese selector antes
   scroll?: boolean;                  // default true — scroll para lazy-load
@@ -459,7 +466,7 @@ async function runJsonLdStrategy(ctx: RunContext, s: JsonLdStrategy): Promise<vo
 
     try {
       const html = await fetchText(url, ctx.userAgent);
-      const events = parseJsonLdEvents(html, url, ctx);
+      const events = parseJsonLdEvents(html, url, ctx, s.event_types);
       await reportError(ctx,`jsonld page ${page}: ${events.length} events`, {
         errorCode: 'info',
         url,
@@ -479,13 +486,20 @@ async function runJsonLdStrategy(ctx: RunContext, s: JsonLdStrategy): Promise<vo
 }
 
 // Parsea todos los <script type="application/ld+json"> y extrae:
-// - @type Event (o array)
-// - ItemList con @type Event en items
-// - @graph que contenga Events
-function parseJsonLdEvents(html: string, pageUrl: string, ctx: RunContext): GenericRawEvent[] {
+// - @type Event (o array, default)
+// - ItemList con items del tipo solicitado
+// - @graph que contenga matches
+// `eventTypes` permite override del default (atrapalo usa 'Product').
+function parseJsonLdEvents(
+  html: string,
+  pageUrl: string,
+  ctx: RunContext,
+  eventTypes: string[] = ['Event'],
+): GenericRawEvent[] {
   const $ = cheerio.load(html);
   const events: GenericRawEvent[] = [];
   const socials = extractSocials($);
+  const typeRegex = new RegExp(`^(${eventTypes.join('|')})$`, 'i');
 
   $('script[type="application/ld+json"]').each((_, el) => {
     const txt = $(el).contents().text();
@@ -497,7 +511,7 @@ function parseJsonLdEvents(html: string, pageUrl: string, ctx: RunContext): Gene
       return;
     }
     walkJsonLd(parsed, (node) => {
-      if (isEventNode(node)) {
+      if (matchesType(node, typeRegex)) {
         events.push(jsonLdToEvent(node, pageUrl, ctx, socials));
       }
     });
@@ -521,10 +535,10 @@ function walkJsonLd(node: unknown, cb: (n: JsonLdNode) => void): void {
   if (obj.item && typeof obj.item === 'object') walkJsonLd(obj.item, cb);
 }
 
-function isEventNode(node: JsonLdNode): boolean {
+function matchesType(node: JsonLdNode, re: RegExp): boolean {
   const t = node['@type'];
-  if (typeof t === 'string') return /Event/i.test(t);
-  if (Array.isArray(t)) return t.some((x) => typeof x === 'string' && /Event/i.test(x));
+  if (typeof t === 'string') return re.test(t);
+  if (Array.isArray(t)) return t.some((x) => typeof x === 'string' && re.test(x));
   return false;
 }
 
@@ -792,7 +806,7 @@ async function runPlaywrightStrategy(ctx: RunContext, s: PlaywrightStrategy): Pr
 
       let events: GenericRawEvent[] = [];
       if (s.extract === 'jsonld') {
-        events = parseJsonLdEvents(html, extractedFrom, ctx);
+        events = parseJsonLdEvents(html, extractedFrom, ctx, s.event_types);
       } else if (s.extract === 'next_data') {
         events = parseNextDataEvents(html, extractedFrom, ctx);
       } else {
