@@ -53,7 +53,18 @@ export type CompanyStatus =
   | 'lost'
   | 'dnc';
 
-export interface CompanyRow {
+export interface VerificationFlags {
+  websiteVerified: boolean;
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  linkedinVerified: boolean;
+  instagramVerified: boolean;
+  facebookVerified: boolean;
+  twitterVerified: boolean;
+  verifiedAt: Date | null;
+}
+
+export interface CompanyRow extends VerificationFlags {
   id: number;
   name: string;
   legalName: string | null;
@@ -91,6 +102,14 @@ interface RawRow {
   instagram_url: string | null;
   facebook_url: string | null;
   twitter_url: string | null;
+  website_verified: number;
+  email_verified: number;
+  phone_verified: number;
+  linkedin_verified: number;
+  instagram_verified: number;
+  facebook_verified: number;
+  twitter_verified: number;
+  verified_at: Date | null;
   industry: string | null;
   employees_size: string | null;
   employees_exact: number | null;
@@ -160,6 +179,9 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
       c.id, c.name, c.legal_name, c.category, c.parent_company,
       c.city, c.website, c.email, c.phone,
       c.linkedin_url, c.instagram_url, c.facebook_url, c.twitter_url,
+      c.website_verified, c.email_verified, c.phone_verified,
+      c.linkedin_verified, c.instagram_verified, c.facebook_verified,
+      c.twitter_verified, c.verified_at,
       c.industry, c.employees_size, c.employees_exact,
       c.status, c.enrichment_source,
       COALESCE(SUM(s.events_count), 0)           AS total_events,
@@ -189,6 +211,14 @@ export async function getCompanies(opts: GetCompaniesOptions = {}): Promise<Comp
     instagramUrl: r.instagram_url,
     facebookUrl: r.facebook_url,
     twitterUrl: r.twitter_url,
+    websiteVerified: Boolean(r.website_verified),
+    emailVerified: Boolean(r.email_verified),
+    phoneVerified: Boolean(r.phone_verified),
+    linkedinVerified: Boolean(r.linkedin_verified),
+    instagramVerified: Boolean(r.instagram_verified),
+    facebookVerified: Boolean(r.facebook_verified),
+    twitterVerified: Boolean(r.twitter_verified),
+    verifiedAt: r.verified_at,
     industry: r.industry,
     employeesSize: r.employees_size,
     employeesExact: r.employees_exact,
@@ -207,6 +237,44 @@ export async function getDistinctCities(): Promise<string[]> {
        ORDER BY city ASC`,
   );
   return rows.map((r) => r.city as string);
+}
+
+export type VerifiableField =
+  | 'website'
+  | 'email'
+  | 'phone'
+  | 'linkedin'
+  | 'instagram'
+  | 'facebook'
+  | 'twitter';
+
+const VERIFIABLE_COLUMN: Record<VerifiableField, string> = {
+  website: 'website_verified',
+  email: 'email_verified',
+  phone: 'phone_verified',
+  linkedin: 'linkedin_verified',
+  instagram: 'instagram_verified',
+  facebook: 'facebook_verified',
+  twitter: 'twitter_verified',
+};
+
+export async function setCompanyVerified(
+  companyId: number,
+  field: VerifiableField,
+  verified: boolean,
+): Promise<{ updated: boolean }> {
+  const col = VERIFIABLE_COLUMN[field];
+  const [res] = await getPool().query<mysql.ResultSetHeader>(
+    `UPDATE companies
+        SET ${col} = ?,
+            verified_at = IF(? = TRUE OR
+                             website_verified OR email_verified OR phone_verified OR
+                             linkedin_verified OR instagram_verified OR facebook_verified OR
+                             twitter_verified, UTC_TIMESTAMP(), NULL)
+      WHERE id = ?`,
+    [verified ? 1 : 0, verified ? 1 : 0, companyId],
+  );
+  return { updated: res.affectedRows > 0 };
 }
 
 export interface CompanyStats {

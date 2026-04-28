@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { PromoterFilters } from "@/components/promoter-filters";
+import { PromoterVerifyButton } from "@/components/promoter-verify-button";
 import {
   getCompanies,
   getCompanyStats,
@@ -21,7 +22,7 @@ import {
   type GetCompaniesOptions,
 } from "@/lib/leads";
 
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
 
 const VALID_CATEGORIES: CompanyCategory[] = [
   "promoter",
@@ -173,6 +174,7 @@ export default async function PromotersPage({ searchParams }: PromotersPageProps
                   <Th>Fuentes</Th>
                   <Th>Ciudad</Th>
                   <Th>Contacto</Th>
+                  <Th>Validar</Th>
                   <Th>Estado</Th>
                 </tr>
               </thead>
@@ -283,6 +285,9 @@ export default async function PromotersPage({ searchParams }: PromotersPageProps
                           <span className="text-xs">—</span>
                         )}
                       </div>
+                    </Td>
+                    <Td>
+                      <PromoterVerifyButton company={c} />
                     </Td>
                     <Td>
                       <span
