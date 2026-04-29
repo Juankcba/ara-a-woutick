@@ -27,8 +27,8 @@ export function HeroSearch({ query, onQueryChange }: HeroSearchProps) {
             Encuentra la entrada al mejor precio
           </h1>
           <p className="text-white/75 mt-2 text-base leading-relaxed max-w-xl mx-auto">
-            Comparamos Taquilla.com, Ticketmaster, Eventbrite, Fever y El Corte
-            Inglés para que nunca pagues de más.
+            Comparamos Taquilla.com, Ticketmaster y El Corte Inglés para que
+            nunca pagues de más.
           </p>
         </div>
 

@@ -15,8 +15,6 @@ const CATEGORY_LABEL: Record<string, Category> = {
 const PLATFORM_SLUGS: readonly Platform[] = [
   'taquilla',
   'ticketmaster',
-  'eventbrite',
-  'fever',
   'elcorteingles',
 ];
 

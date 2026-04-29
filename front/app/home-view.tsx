@@ -129,8 +129,8 @@ export function HomeView({ events }: HomeViewProps) {
             <a href="https://www.ticketmaster.es/" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
               Ticketmaster
             </a>
-            <a href="https://www.eventbrite.es/" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
-              Eventbrite
+            <a href="https://www.elcorteingles.es/entradas/" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
+              El Corte Inglés
             </a>
           </div>
         </div>
