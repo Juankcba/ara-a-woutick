@@ -28,6 +28,13 @@ MAILTO=""
 45 4 * * 1     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_vivetix.ts >> /home/<CPANEL_USER>/logs/vivetix.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# Janto v5 — NO corre en cPanel cron. El backend chequea TLS fingerprint y
+# rechaza curl con 500 — el scraper requiere Playwright + Chromium, igual
+# que ECI. Movido a GitHub Actions cuando se construya el workflow.
+#
+# Por ahora correr manual: pnpm exec tsx bin/scrape_janto_v5.ts
+
+# ──────────────────────────────────────────────────────────────────────
 # Venues → leads_crm. Sincroniza todos los venues que los scrapers crearon
 # en ticket_public.venues a leads_crm.companies con category='venue'.
 # Diario 05:00 (después de Taquilla que es quien más venues genera).
