@@ -143,15 +143,15 @@ interface Socials {
   linkedin: string | null;
 }
 
+// Después de la URL base, cualquier query/fragmento queda restringido a chars
+// URL-seguros — esto evita capturar JSON inline (",iconEnabled":...) cuando el
+// HTML mete varios profile URLs juntos en un script tag.
+const URL_TAIL = `[?#][^\\s"'<>,;]*`;
 const SOCIAL_PATTERNS: Record<SocialField, RegExp> = {
-  // instagram.com/<handle> donde handle no es 'share', 'p', 'reel', etc
-  instagram: /https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,30})\/?(?:[?#].*)?(?=["'\s])/g,
-  // facebook.com/<page> excluyendo sharer, plugins, dialog
-  facebook: /https?:\/\/(?:www\.|m\.)?facebook\.com\/([a-zA-Z0-9.-]{2,50})\/?(?:[?#].*)?(?=["'\s])/g,
-  // twitter.com / x.com — handle alfanumérico
-  twitter: /https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]{1,15})\/?(?:[?#].*)?(?=["'\s])/g,
-  // linkedin.com/company/<slug> o /in/<person>
-  linkedin: /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|in|school)\/[a-zA-Z0-9_-]{2,80}\/?(?:[?#].*)?(?=["'\s])/g,
+  instagram: new RegExp(`https?:\\/\\/(?:www\\.)?instagram\\.com\\/([a-zA-Z0-9._]{2,30})\\/?(?:${URL_TAIL})?`, 'g'),
+  facebook:  new RegExp(`https?:\\/\\/(?:www\\.|m\\.)?facebook\\.com\\/([a-zA-Z0-9.-]{2,50})\\/?(?:${URL_TAIL})?`, 'g'),
+  twitter:   new RegExp(`https?:\\/\\/(?:www\\.)?(?:twitter\\.com|x\\.com)\\/([a-zA-Z0-9_]{1,15})\\/?(?:${URL_TAIL})?`, 'g'),
+  linkedin:  new RegExp(`https?:\\/\\/(?:[a-z]{2,3}\\.)?linkedin\\.com\\/(?:company|in|school)\\/[a-zA-Z0-9_-]{2,80}\\/?(?:${URL_TAIL})?`, 'g'),
 };
 
 // Subpaths que NO son perfiles reales — se filtran por handle/path.
@@ -336,30 +336,32 @@ async function saveContacts(companyId: number, data: ContactData): Promise<numbe
 
   // Socials — solo llenamos los que están NULL. UPDATE con COALESCE no toca
   // los valores existentes, así que un re-run no pisa lo verificado a mano.
+  // Si algún URL salió monstruoso (regex roto sobre JSON inline), lo descartamos
+  // antes del UPDATE — la columna es VARCHAR(500), un >500 char haría fallar
+  // la query y matar el run entero.
+  const MAX_URL = 500;
   const updates: string[] = [];
   const params: unknown[] = [];
-  if (data.socials.instagram) {
-    updates.push('instagram_url = COALESCE(instagram_url, ?)');
-    params.push(data.socials.instagram);
-  }
-  if (data.socials.facebook) {
-    updates.push('facebook_url = COALESCE(facebook_url, ?)');
-    params.push(data.socials.facebook);
-  }
-  if (data.socials.twitter) {
-    updates.push('twitter_url = COALESCE(twitter_url, ?)');
-    params.push(data.socials.twitter);
-  }
-  if (data.socials.linkedin) {
-    updates.push('linkedin_url = COALESCE(linkedin_url, ?)');
-    params.push(data.socials.linkedin);
-  }
+  const safe = (v: string | null) => (v && v.length <= MAX_URL ? v : null);
+  const ig = safe(data.socials.instagram);
+  const fb = safe(data.socials.facebook);
+  const tw = safe(data.socials.twitter);
+  const li = safe(data.socials.linkedin);
+  if (ig) { updates.push('instagram_url = COALESCE(instagram_url, ?)'); params.push(ig); }
+  if (fb) { updates.push('facebook_url  = COALESCE(facebook_url,  ?)'); params.push(fb); }
+  if (tw) { updates.push('twitter_url   = COALESCE(twitter_url,   ?)'); params.push(tw); }
+  if (li) { updates.push('linkedin_url  = COALESCE(linkedin_url,  ?)'); params.push(li); }
   if (updates.length > 0) {
     params.push(companyId);
-    await leadsPool.query(
-      `UPDATE companies SET ${updates.join(', ')} WHERE id = ?`,
-      params,
-    );
+    try {
+      await leadsPool.query(
+        `UPDATE companies SET ${updates.join(', ')} WHERE id = ?`,
+        params,
+      );
+    } catch (e) {
+      // No matar el run por un row patológico — log y seguimos.
+      console.error(`     socials UPDATE failed for #${companyId}: ${(e as Error).message}`);
+    }
   }
   return inserted;
 }
