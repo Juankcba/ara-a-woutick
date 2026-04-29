@@ -18,6 +18,16 @@ MAILTO=""
 0 4 * * 1      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh scrape apm_musical >> /home/<CPANEL_USER>/logs/apm-scrape.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
+# Codetickets — semanal lunes 04:30. API JSON pública (api.codetickets.com),
+# ~30s por corrida. Importa organizadores+venues directo a leads_crm.
+30 4 * * 1     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_codetickets.ts >> /home/<CPANEL_USER>/logs/codetickets.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
+# Vivetix — semanal lunes 04:45. API DataTables (vivetix.com/api/v3/events),
+# ~30s por corrida. Importa promoters (seller_id) directo a leads_crm.
+45 4 * * 1     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_vivetix.ts >> /home/<CPANEL_USER>/logs/vivetix.log 2>&1
+
+# ──────────────────────────────────────────────────────────────────────
 # Venues → leads_crm. Sincroniza todos los venues que los scrapers crearon
 # en ticket_public.venues a leads_crm.companies con category='venue'.
 # Diario 05:00 (después de Taquilla que es quien más venues genera).
