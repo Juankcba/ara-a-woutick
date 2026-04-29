@@ -1,5 +1,6 @@
 import 'server-only';
 import { prisma } from '@/lib/db';
+import { getSavings } from '@/lib/data';
 import type { Category, Event, Platform, PlatformPrice } from '@/lib/data';
 
 const CATEGORY_LABEL: Record<string, Category> = {
@@ -157,11 +158,44 @@ export async function getEvents(opts: GetEventsOptions = {}): Promise<Event[]> {
 
   merged.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-  // Destacamos los 3 primeros que tengan imagen y ≥2 fechas (son los "grandes").
-  const candidates = merged.filter((e) => e.image && (e.dateCount ?? 1) >= 2);
-  for (let i = 0; i < Math.min(3, candidates.length); i++) {
-    candidates[i].featured = true;
+  // Destacados = mejor comparable. El producto justifica al usuario cuando un
+  // evento aparece en >=2 plataformas — eso es lo que vale mostrar arriba.
+  // Antes elegíamos por dateCount (cantidad de funciones), que siempre ganaban
+  // los mismos 3 musicales de Madrid de Taquilla.
+  //
+  // Cascada:
+  //   1) ≥2 plataformas con precio>0 → ideal (muestra ahorro)
+  //   2) ≥2 plataformas (sin filtro precio) → cubre el caso TM (Discovery API
+  //      free no expone priceRanges en ES, ver memoria del proyecto)
+  //   3) Fallback: dateCount>=2 + imagen → llena los 3 slots si las anteriores
+  //      no alcanzan
+  function platformsWithPrice(e: Event): number {
+    const set = new Set<Platform>();
+    for (const p of e.prices) if (p.price > 0 && p.available) set.add(p.platform);
+    return set.size;
   }
+  function distinctPlatforms(e: Event): number {
+    const set = new Set<Platform>();
+    for (const p of e.prices) set.add(p.platform);
+    return set.size;
+  }
+
+  const tier1 = merged
+    .filter((e) => e.image && platformsWithPrice(e) >= 2)
+    .sort((a, b) => {
+      const cp = platformsWithPrice(b) - platformsWithPrice(a);
+      if (cp !== 0) return cp;
+      return getSavings(b) - getSavings(a);
+    });
+  const tier2 = merged
+    .filter((e) => e.image && distinctPlatforms(e) >= 2 && !tier1.includes(e))
+    .sort((a, b) => distinctPlatforms(b) - distinctPlatforms(a));
+  const tier3 = merged
+    .filter((e) => e.image && (e.dateCount ?? 1) >= 2)
+    .filter((e) => !tier1.includes(e) && !tier2.includes(e));
+
+  const featured: Event[] = [...tier1, ...tier2, ...tier3].slice(0, 3);
+  for (const e of featured) e.featured = true;
 
   return merged;
 }
