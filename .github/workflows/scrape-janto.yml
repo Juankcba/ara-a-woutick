@@ -1,0 +1,71 @@
+name: Scrape Janto v5 (weekly)
+
+# Janto v5 (apiw5.janto.es) chequea TLS fingerprint y rechaza curl con 500 —
+# requiere Playwright + Chromium real, igual que ECI. Por eso vive en GitHub
+# Actions y no en el cron cPanel (que no tiene sudo para deps de sistema).
+#
+# Schedule: lunes 04:30 UTC (~06:30 Europe/Madrid). Se alinea con el slot
+# del lunes que ya usan codetickets/vivetix en cPanel.
+on:
+  schedule:
+    - cron: '30 4 * * 1'
+  workflow_dispatch: {}
+
+concurrency:
+  group: scrape-janto-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    name: Scrape Janto v5 tenants
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: scrapers
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Get pnpm store dir
+        id: pnpm-cache
+        shell: bash
+        run: echo "store=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('scrapers/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Scrape Janto v5
+        env:
+          # DB cPanel reachable via cpanel.woutick.es:3306 — el user MySQL
+          # debe tener grants desde % (Remote MySQL en cPanel).
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          DB_PUBLIC: ${{ secrets.DB_PUBLIC }}
+          DB_SCRAPING: ${{ secrets.DB_SCRAPING }}
+          DB_LEADS: ${{ secrets.DB_LEADS }}
+        run: pnpm exec tsx bin/scrape_janto_v5.ts
