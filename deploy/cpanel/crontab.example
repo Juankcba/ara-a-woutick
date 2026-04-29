@@ -34,9 +34,13 @@ MAILTO=""
 0 5 * * 2      /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/discover_websites.ts --limit 100 >> /home/<CPANEL_USER>/logs/discover.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
-# Scrape contact pages — extrae emails+phones de /contacto /prensa /equipo
-# de las empresas con website y sin contacts. Martes 05:30.
-30 5 * * 2     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_contact_pages.ts --limit 100 >> /home/<CPANEL_USER>/logs/contact-scrape.log 2>&1
+# Scrape contact pages — extrae emails + teléfonos + IG/FB/Twitter/LinkedIn
+# de /contacto /prensa /equipo. Diario 05:30 — el query target del script
+# salta a la siguiente empresa pendiente cada vez (companies con website
+# que les falte cualquier contacto o social), así corre cuanto haga falta
+# hasta consumir el backlog. --limit 50 para mantener cada corrida en
+# ~10-12 min y no encimar con el dedup de los Martes.
+30 5 * * *     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/scrape_contact_pages.ts --limit 50 >> /home/<CPANEL_USER>/logs/contact-scrape.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
 # Dedup companies. Idempotente (si no hay duplicados, no hace nada).
@@ -44,10 +48,12 @@ MAILTO=""
 45 5 * * 2     /home/<CPANEL_USER>/woutick-scrapers/deploy/cpanel/run.sh exec tsx bin/dedup_companies.ts --apply >> /home/<CPANEL_USER>/logs/dedup.log 2>&1
 
 # ──────────────────────────────────────────────────────────────────────
-# ECI entradas — NO corre en cPanel cron. Requiere Playwright + Chromium.
-# El VPS cPanel no tiene docker instalado, así que lo movimos a
-# GitHub Actions (.github/workflows/scrape-eci.yml, cada 12h).
-# Ver deploy/cpanel/README.md sección "ECI vía GitHub Actions".
+# ECI entradas + Fever — NO corren en cPanel cron. Requieren Playwright
+# + Chromium, y el VPS cPanel no tiene sudo para instalar las deps de
+# sistema. Movidos a GitHub Actions:
+#   .github/workflows/scrape-eci.yml   (cada 12h)
+#   .github/workflows/scrape-fever.yml (diario 04:30 UTC)
+# Ver deploy/cpanel/README.md sección "Scrapers en GitHub Actions".
 
 # ──────────────────────────────────────────────────────────────────────
 # Rotación de logs — semanal domingo 23:00. Mantiene los últimos 7 días.
