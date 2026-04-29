@@ -293,7 +293,14 @@ async function fetchTargets(args: CliArgs): Promise<CompanyRow[]> {
             (SELECT COUNT(*) FROM contacts ct WHERE ct.company_id = c.id) AS existing_contacts
        FROM companies c
        ${whereSql}
-       ORDER BY c.enriched_at DESC, c.id ASC
+       ORDER BY
+         -- 1) más socials NULL primero — estas son las que más beneficio reciben
+         ((c.instagram_url IS NULL) + (c.facebook_url IS NULL) +
+          (c.twitter_url IS NULL) + (c.linkedin_url IS NULL)) DESC,
+         -- 2) entre las del mismo bucket, las nunca enriquecidas primero
+         (c.enriched_at IS NULL) DESC,
+         c.enriched_at ASC,
+         c.id ASC
        LIMIT ?`,
     [...params, args.limit],
   );
@@ -413,6 +420,12 @@ function emailRank(email: string): number {
     if (!args.dryRun && hasAnything) {
       const inserted = await saveContacts(c.id, data);
       console.log(`   ✓ saved ${inserted} new contacts + socials`);
+    }
+
+    // Marcar enriched_at incluso cuando no encontramos nada — así el siguiente
+    // ORDER BY enriched_at ASC no la vuelve a elegir antes que las vírgenes.
+    if (!args.dryRun) {
+      await leadsPool.query('UPDATE companies SET enriched_at = UTC_TIMESTAMP() WHERE id = ?', [c.id]);
     }
 
     await sleep(REQ_DELAY_MS);
